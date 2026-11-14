@@ -1,0 +1,103 @@
+{%- macro row(label, value) -%}
+{% if value and value != '—' %}<tr><td style="padding:3px 12px 3px 0;color:#6b7280;font-size:13px;white-space:nowrap;vertical-align:top">{{ label }}</td><td style="padding:3px 0;font-size:13px;color:#111827">{{ value }}</td></tr>{% endif %}
+{%- endmacro -%}
+
+{%- macro property_card(c, accent='#1d4ed8', note=None) -%}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-left:4px solid {{ accent }};border-radius:6px;margin:0 0 14px 0;background:#ffffff">
+  <tr><td style="padding:14px 16px">
+    <div style="font-size:16px;font-weight:700;color:#111827">{{ c.title }}</div>
+    <div style="font-size:13px;color:#4b5563;margin:2px 0 8px 0">
+      {{ c.town }}{% if c.town %}, {% endif %}{{ c.county }} County
+      {% if c.class_label %} · <b>{{ c.class_label }}</b>{% if c.prop_class %} ({{ c.prop_class }}){% endif %}{% endif %}
+      {% if c.block_lot %} · {{ c.block_lot }}{% endif %}
+    </div>
+    {% if note %}<div style="font-size:13px;color:#92400e;background:#fffbeb;padding:6px 8px;border-radius:4px;margin-bottom:8px">{{ note }}</div>{% endif %}
+    <table role="presentation" cellpadding="0" cellspacing="0">
+      {{ row('Sale date', c.sale_date|date) }}
+      {{ row('Current status', c.latest_status) }}
+      {{ row('Owner / defendant', c.defendant) }}
+      {{ row('Lender / plaintiff', c.plaintiff) }}
+      {{ row('Judgment', c.judgment|money) }}
+      {{ row('Upset price', c.upset|money) }}
+      {{ row('Assessed value', c.net_value|money) }}
+      {% if c.debt_to_value %}{{ row('Debt vs. assessed', c.debt_to_value ~ '%') }}{% endif %}
+      {{ row('Building', c.bldg_desc) }}
+      {{ row('Land', c.land_desc) }}
+      {% if c.calc_acre %}{{ row('Acres', '%.2f'|format(c.calc_acre)) }}{% endif %}
+      {% if c.yr_constr %}{{ row('Year built', c.yr_constr) }}{% endif %}
+      {% if c.last_sale_price %}{{ row('Last sale', (c.last_sale_price|money) ~ ' on ' ~ (c.last_sale_date|date)) }}{% endif %}
+      {{ row('Sheriff # / docket', (c.sheriff_number or '') ~ (' / ' ~ c.court_case if c.court_case else '')) }}
+      {{ row('Foreclosure attorney', (c.attorney or '') ~ (' · ' ~ c.attorney_phone if c.attorney_phone else '')) }}
+    </table>
+    {% if c.history_tail %}
+    <div style="font-size:12px;color:#6b7280;margin-top:8px">Recent status:
+      {% for h in c.history_tail %}{{ h.status }} ({{ h.date }}){% if not loop.last %} · {% endif %}{% endfor %}
+    </div>
+    {% endif %}
+    <div style="margin-top:10px;font-size:13px">
+      <a href="{{ c.detail_url }}" style="color:#1d4ed8">Sheriff listing</a> &nbsp;·&nbsp;
+      <a href="{{ c.maps_url }}" style="color:#1d4ed8">Map</a>
+    </div>
+  </td></tr>
+</table>
+{%- endmacro -%}
+<!doctype html>
+<html><body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:20px 10px">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%">
+  <tr><td style="padding:0 0 14px 0">
+    <div style="font-size:20px;font-weight:700;color:#111827">NJ Distressed Property Alert</div>
+    <div style="font-size:13px;color:#6b7280">{{ date }}{% if baseline %} · First run: everything currently scheduled{% endif %}</div>
+  </td></tr>
+
+  {% if not has_news %}
+  <tr><td style="font-size:14px;color:#374151;padding-bottom:14px">No new commercial listings or changes today.</td></tr>
+  {% endif %}
+
+  {% if new_target %}
+  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:6px 0 8px">{% if baseline %}Commercial properties on sheriff sale lists{% else %}New commercial sheriff sales{% endif %} ({{ new_target|length }})</td></tr>
+  <tr><td>{% for c in new_target %}{{ property_card(c) }}{% endfor %}</td></tr>
+  {% endif %}
+
+  {% if changes %}
+  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:6px 0 8px">Updates on tracked properties ({{ changes|length }})</td></tr>
+  <tr><td>
+    {% for c in changes %}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-left:4px solid #7c3aed;border-radius:6px;margin:0 0 10px 0;background:#fff">
+      <tr><td style="padding:12px 16px">
+        <div style="font-size:15px;font-weight:700;color:#111827">{{ c.title }} <span style="font-weight:400;color:#6b7280;font-size:13px">· {{ c.town }}, {{ c.county }} County</span></div>
+        {% for ln in c.lines %}
+        <div style="font-size:13px;color:#111827;margin-top:4px"><b>{{ ln.what }}:</b> {% if ln.old and ln.old != 'None' %}{{ ln.old }} → {% endif %}{{ ln.new }}</div>
+        {% endfor %}
+        <div style="margin-top:8px;font-size:13px"><a href="{{ c.detail_url }}" style="color:#1d4ed8">Sheriff listing</a></div>
+      </td></tr>
+    </table>
+    {% endfor %}
+  </td></tr>
+  {% endif %}
+
+  {% if closed %}
+  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:6px 0 8px">Off the sale list ({{ closed|length }})</td></tr>
+  <tr><td>
+    {% for c in closed %}
+    <div style="font-size:13px;color:#111827;background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;margin-bottom:8px">
+      <b>{{ c.title }}</b>, {{ c.town }} ({{ c.county }}) — {{ c.final }} · <a href="{{ c.detail_url }}" style="color:#1d4ed8">listing</a>
+    </div>
+    {% endfor %}
+  </td></tr>
+  {% endif %}
+
+  {% if new_possible %}
+  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:10px 0 8px">Possibly commercial — needs a look ({{ new_possible|length }})</td></tr>
+  <tr><td style="font-size:12px;color:#6b7280;padding-bottom:8px">These couldn't be matched to a tax record, but the owner is a business entity.</td></tr>
+  <tr><td>{% for c in new_possible %}{{ property_card(c, '#d97706') }}{% endfor %}</td></tr>
+  {% endif %}
+
+  <tr><td style="font-size:11px;color:#9ca3af;padding-top:14px;border-top:1px solid #e5e7eb">
+    Counties scanned: {% for name, n in stats.counties.items() %}{{ name }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}.
+    {% if stats.county_errors %}<br><span style="color:#b91c1c">Could not read: {% for name, err in stats.county_errors.items() %}{{ name }}{% if not loop.last %}, {% endif %}{% endfor %}.</span>{% endif %}
+    <br>Sources: county sheriff listings on CivilView; NJ MOD-IV tax data (NJOGIS). Verify figures against the source before relying on them.
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>
