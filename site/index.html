@@ -22,6 +22,7 @@
   --pin: #47c7ec;          /* tracked commercial */
   --pin-possible: #f0a63a; /* needs review */
   --pin-closed: #8794a3;
+  --pin-reo: #c58cff;      /* bank-owned (REO) */
   --alert: #ff5c72;
   --parcel: #ffe066;       /* tax-map yellow, for parcel outlines */
   --ok: #5fd39a;
@@ -102,6 +103,17 @@ a { color: var(--pin); }
 .pin.target { --c: var(--pin); }
 .pin.possible { --c: var(--pin-possible); }
 .pin.closed { --c: var(--pin-closed); }
+.pin.reo { --c: var(--pin-reo); }
+.pin.reo i { border-radius: 2px; transform: rotate(45deg) scale(.92); }
+.pin.reo.selected i { transform: rotate(45deg) scale(1.3); }
+.pin.reo .flag { background: var(--pin-reo); color: #1b1026; }
+.pin.reo .flag::after { border-top-color: var(--pin-reo); }
+.pin.reo.alert::before { border-color: var(--pin-reo); border-radius: 4px; transform-origin: center; }
+.chip.status i { border-radius: 2px; }
+.chip.status[data-status="open"] i { border-radius: 50%; }
+.chip.status[data-status="reo"] i { transform: rotate(45deg) scale(.85); }
+.reo-box { display: grid; gap: 4px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--pin-reo) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--pin-reo) 40%, var(--line)); font-size: 13px; }
+.reo-box b { color: var(--pin-reo); font-family: var(--font-head); letter-spacing: .04em; text-transform: uppercase; font-size: 12px; }
 .pin.alert::before { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--alert); animation: pulse 1.8s ease-out infinite; }
 #map:not(.show-flags) .pin .flag { display: none; }
 .pin .flag { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 2px 7px; border-radius: 3px; background: var(--alert); color: #fff; font-family: var(--font-head); font-weight: 700; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
@@ -188,7 +200,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
             <option value="90">Sale in next 90 days</option>
           </select>
         </div>
-        <div class="row"><label class="check"><input type="checkbox" id="show-closed"> Show properties off the sale list</label></div>
+        <div class="chips" id="status-chips" aria-label="Status"></div>
       </div>
       <div class="tabs" role="tablist">
         <button role="tab" id="tab-alerts" aria-selected="true">Alerts<span class="count" id="n-alerts"></span></button>
@@ -232,7 +244,14 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   const titleCase = (s) => String(s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Llc|Lp|Llp|Pllc|Pc|Inc|Na|Nj|Us|Usa)\b/g, (m) => m.toUpperCase());
 
   let DATA, NOW, LAST_VISIT, map, layers, markers = new Map(), selected = null, outline = null, tab = "alerts";
-  const state = { q: "", county: "", window: "", closed: false, types: new Set(TYPES.map((t) => t.key)) };
+  const STATUSES = [
+    { key: "open", label: "Upcoming sales", c: "var(--pin)" },
+    { key: "reo", label: "Bank-owned (REO)", c: "var(--pin-reo)" },
+    { key: "off", label: "Other off-list", c: "var(--pin-closed)" },
+  ];
+  const state = { q: "", county: "", window: "", statuses: new Set(["open", "reo"]), types: new Set(TYPES.map((t) => t.key)) };
+  const statusKey = (p) => (p.is_open ? "open" : p.outcome === "reo" ? "reo" : "off");
+  const isReo = (p) => !p.is_open && p.outcome === "reo";
 
   function alertLabel(a) {
     const v = (a.new_value || "").toLowerCase();
@@ -240,6 +259,8 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     if (a.kind === "sale_date") return "New sale date";
     if (a.kind === "upset") return "Upset changed";
     if (a.kind === "judgment") return "Judgment changed";
+    if (a.kind === "reo") return "Bank-owned (REO)";
+    if (a.kind === "closed" && /plaintiff|buy\s*-?\s*back/.test(v) && !/3rd|third/.test(v)) return "Bought back by lender";
     if (a.kind === "closed") return /sold|purchas/.test(v) ? "Sold" : /cancel/.test(v) ? "Cancelled" : /withdr|vacat|dismiss/.test(v) ? "Withdrawn" : "Off the list";
     if (/bankrupt/.test(v)) return "Bankruptcy hold";
     if (/adjourn/.test(v)) return "Adjourned";
@@ -251,6 +272,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const nice = (x) => (a.kind === "upset" || a.kind === "judgment" ? money(x) : a.kind === "sale_date" ? fmtDate(x) : isoToNice(x));
     if (a.kind === "new") return "Added to the sheriff sale list";
     if (a.kind === "closed") return "Final status: " + isoToNice(a.new_value);
+    if (a.kind === "reo") return "Lender bought it back at sheriff sale" + (a.new_value ? " (" + a.new_value + ")" : "");
     return (a.old_value ? nice(a.old_value) + " → " : "") + nice(a.new_value);
   }
   const ago = (ts) => {
@@ -261,7 +283,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   const firstDefendant = (d) => String(d || "").split(/;|\bET\.?\s*ALS?\b|\bA\/K\/A\b/i)[0].trim();
 
   function visible(p) {
-    if (!state.closed && !p.is_open) return false;
+    if (!state.statuses.has(statusKey(p))) return false;
     if (!state.types.has(typeKey(p))) return false;
     if (state.county && p.county !== state.county) return false;
     if (state.window) {
@@ -269,7 +291,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       if (!d || d < NOW - 864e5 || d > +NOW + state.window * 864e5) return false;
     }
     if (state.q) {
-      const hay = [p.street, p.city, p.muni, p.county, p.defendant, p.plaintiff, p.court_case, p.sheriff_number, p.block && "block " + p.block].join(" ").toLowerCase();
+      const hay = [p.street, p.city, p.muni, p.county, p.defendant, p.plaintiff, p.court_case, p.sheriff_number, p.block && "block " + p.block, isReo(p) ? "reo bank-owned bank owned" : ""].join(" ").toLowerCase();
       if (!state.q.split(/\s+/).every((w) => hay.includes(w))) return false;
     }
     return true;
@@ -307,7 +329,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   }
 
   function pinIcon(p, alert) {
-    const cls = ["pin", p.is_open ? p.category : "closed", alert ? "alert" : "", selected === p.property_id ? "selected" : ""].join(" ");
+    const cls = ["pin", p.is_open ? p.category : isReo(p) ? "reo" : "closed", alert ? "alert" : "", selected === p.property_id ? "selected" : ""].join(" ");
     const flag = alert ? `<span class="flag">${esc(alertLabel(alert))}</span>` : "";
     return L.divIcon({ className: "", html: `<span class="${cls}"><i></i>${flag}</span>`, iconSize: [16, 16], iconAnchor: [8, 8] });
   }
@@ -334,8 +356,10 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const newWeek = recentAlerts().filter((a) => a.kind === "new").length;
     const soon = open.filter((p) => { const d = parseDay(p.sale_date); return d && d >= NOW - 864e5 && d <= +NOW + 30 * 864e5; }).length;
     const debt = open.reduce((s, p) => s + (+(p.upset || p.judgment || 0)), 0);
+    const reo = DATA.properties.filter(isReo).length;
     $("#stats").innerHTML = `
       <div class="stat"><b>${open.length}</b><span>On sale lists</span></div>
+      <div class="stat"><b style="color:var(--pin-reo)">${reo}</b><span>Bank-owned (12 mo)</span></div>
       <div class="stat hot"><b>${newWeek}</b><span>New this week</span></div>
       <div class="stat"><b>${soon}</b><span>Sales in 30 days</span></div>
       <div class="stat"><b>${short$(debt)}</b><span>Upset total</span></div>`;
@@ -350,11 +374,18 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       b.setAttribute("aria-pressed", state.types.has(k));
       refresh();
     });
+    $("#status-chips").innerHTML = STATUSES.map((t) =>
+      `<button class="chip status" data-status="${t.key}" aria-pressed="${state.statuses.has(t.key)}" style="--c:${t.c}"><i></i>${t.label}</button>`).join("");
+    $("#status-chips").querySelectorAll(".chip").forEach((b) => b.onclick = () => {
+      const k = b.dataset.status;
+      state.statuses.has(k) ? state.statuses.delete(k) : state.statuses.add(k);
+      b.setAttribute("aria-pressed", state.statuses.has(k));
+      refresh();
+    });
     const counties = [...new Set(DATA.properties.map((p) => p.county).filter(Boolean))].sort();
     $("#county").insertAdjacentHTML("beforeend", counties.map((c) => `<option>${esc(c)}</option>`).join(""));
     $("#county").onchange = (e) => { state.county = e.target.value; refresh(); };
     $("#window").onchange = (e) => { state.window = +e.target.value || ""; refresh(); };
-    $("#show-closed").onchange = (e) => { state.closed = e.target.checked; refresh(); };
     let t; $("#q").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); refresh(); }, 120); };
     const setTab = (name) => {
       tab = name;
@@ -374,7 +405,13 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   function renderList() {
     const byId = new Map(DATA.properties.map((p) => [p.property_id, p]));
     const alerts = recentAlerts().filter((a) => byId.has(a.property_id) && visible(byId.get(a.property_id)));
-    const props = DATA.properties.filter(visible).sort((a, b) => String(a.sale_date || "9").localeCompare(String(b.sale_date || "9")));
+    const order = { open: 0, reo: 1, off: 2 };
+    const props = DATA.properties.filter(visible).sort((a, b) => {
+      const ka = statusKey(a), kb = statusKey(b);
+      if (ka !== kb) return order[ka] - order[kb];
+      if (ka === "reo") return String(b.outcome_date || "").localeCompare(String(a.outcome_date || ""));
+      return String(a.sale_date || "9").localeCompare(String(b.sale_date || "9"));
+    });
     $("#n-alerts").textContent = alerts.length;
     $("#n-props").textContent = props.length;
     const list = $("#list");
@@ -382,18 +419,18 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       list.innerHTML = alerts.length ? alerts.map((a) => {
         const p = byId.get(a.property_id);
         const unseen = LAST_VISIT && a.ts > LAST_VISIT;
-        const t = a.kind === "closed" ? "var(--pin-closed)" : a.kind === "new" ? "var(--alert)" : "var(--pin-possible)";
+        const t = a.kind === "reo" || alertLabel(a) === "Bought back by lender" ? "var(--pin-reo)" : a.kind === "closed" ? "var(--pin-closed)" : a.kind === "new" ? "var(--alert)" : "var(--pin-possible)";
         return `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
           <div class="top">${unseen ? '<span class="unseen" title="New since your last visit"></span>' : ""}<span class="tag" style="--t:${t}">${esc(alertLabel(a))}</span><span class="when">${ago(a.ts)}</span></div>
           <div class="addr">${esc(titleCase(p.street))}</div>
           <div class="meta">${esc(placeLine(p))}${p.class_label ? " · " + esc(p.class_label) : ""}</div>
           <div class="change">${esc(alertText(a))}</div>
         </button>`;
-      }).join("") : `<div class="empty">No alerts in the last 7 days for the current filters. New listings, adjournments, sale-date and upset changes appear here and pulse on the map.</div>`;
+      }).join("") : `<div class="empty">No alerts in the last 7 days for the current filters. New listings, adjournments, sale-date and upset changes, and new bank-owned (REO) properties appear here and pulse on the map.</div>`;
     } else {
       list.innerHTML = props.length ? props.map((p) => `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
-          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(p.sale_date)}</span></div>
-          <div class="meta">${esc(placeLine(p))} · ${esc(p.class_label || "Needs review")}${p.is_open ? "" : " · Off list"}</div>
+          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(isReo(p) ? p.outcome_date : p.sale_date)}</span></div>
+          <div class="meta">${isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">REO</span> ' : ""}${esc(placeLine(p))} · ${esc(p.class_label || "Needs review")}${p.is_open || isReo(p) ? "" : " · Off list"}</div>
           <div class="meta">Upset ${short$(p.upset)}${p.net_value ? " · Assessed " + short$(p.net_value) : ""}${p.lat == null ? " · No map location" : ""}</div>
         </button>`).join("") : `<div class="empty">No properties match these filters.</div>`;
     }
@@ -405,8 +442,11 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     if (!r) { $("#foot").textContent = "Waiting for the first scan."; return; }
     const n = Object.keys(r.counties || {}).length;
     const errs = Object.keys(r.county_errors || {});
+    const reoErrs = Object.keys(r.reo_errors || {});
     $("#foot").innerHTML = `Last scan ${new Date(r.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${n} counties` +
       (errs.length ? `<br><span class="err">Could not read: ${esc(errs.join(", "))}</span>` : "") +
+      (r.reo_baseline && r.reo_capped ? `<br>Bank-owned (REO) history is still loading; more appear after each daily scan.` : "") +
+      (reoErrs.length ? `<br><span class="err">Past sales not read: ${esc(reoErrs.join(", "))}</span>` : "") +
       `<br>Sources: county sheriff listings (CivilView), NJ MOD-IV tax data (NJOGIS). Verify before relying on figures.`;
   }
 
@@ -430,9 +470,10 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         <button class="x" id="d-close" aria-label="Close">×</button>
         <h2>${esc(titleCase(p.street) || "Address not listed")}</h2>
         <div class="where">${esc(placeLine(p))}${bl ? " · <span class='mono'>" + esc(bl) + "</span>" : ""}</div>
-        <div class="tags">${catTag}${p.is_open ? "" : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
+        <div class="tags">${catTag}${p.is_open ? "" : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">Bank-owned (REO)</span>' : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
       </div>
       <div class="d-body">
+        ${isReo(p) ? `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>${esc(titleCase(p.plaintiff) || "The foreclosing lender")} took the property back at the sheriff sale${p.outcome_status ? ` (“${esc(p.outcome_status)}”)` : ""}. The lender, its servicer or asset manager now controls the sale.</div></div>` : ""}
         ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
         <div class="figs">
           <div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>
@@ -441,14 +482,16 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         </div>
         ${ratio != null ? `<div class="meter"><div>Debt is <b>${ratio}%</b> of assessed value</div><div class="bar"><i style="width:${Math.min(ratio, 100)}%;--fill:${ratio >= 90 ? "var(--alert)" : ratio >= 70 ? "var(--pin-possible)" : "var(--ok)"}"></i></div></div>` : ""}
         <div class="sec"><h3>Sheriff sale</h3><dl class="kv">
-          <dt>Sale date</dt><dd>${fmtDate(p.sale_date)}${when}</dd>
+          <dt>Sale date</dt><dd>${fmtDate(isReo(p) ? p.outcome_date || p.sale_date : p.sale_date)}${isReo(p) ? "" : when}</dd>
           <dt>Status</dt><dd>${esc(p.latest_status || "—")}</dd>
           <dt>Docket</dt><dd><span class="mono">${esc(p.court_case || "—")}</span>${p.court_case ? copyBtn(p.court_case) : ""}</dd>
           <dt>Sheriff #</dt><dd class="mono">${esc(p.sheriff_number || "—")}</dd>
         </dl></div>
         <div class="sec"><h3>Parties</h3><dl class="kv">
-          <dt>Owner</dt><dd><b>${esc(titleCase(owner) || "—")}</b>${others ? `<div class="note">Also named: ${esc(titleCase(others))}</div>` : ""}</dd>
-          <dt>Lender</dt><dd>${esc(titleCase(p.plaintiff) || "—")}</dd>
+          ${isReo(p) ? `<dt>Owner now</dt><dd><b>${esc(titleCase(p.plaintiff) || "—")}</b><div class="note">Foreclosing lender (bought back at sale)</div></dd>
+          <dt>Former owner</dt><dd>${esc(titleCase(owner) || "—")}${others ? `<div class="note">Also named: ${esc(titleCase(others))}</div>` : ""}</dd>` :
+          `<dt>Owner</dt><dd><b>${esc(titleCase(owner) || "—")}</b>${others ? `<div class="note">Also named: ${esc(titleCase(others))}</div>` : ""}</dd>
+          <dt>Lender</dt><dd>${esc(titleCase(p.plaintiff) || "—")}</dd>`}
           <dt>Attorney</dt><dd>${esc(titleCase(p.attorney) || "—")}${p.attorney_phone ? `<div class="mono">${esc(p.attorney_phone)}${copyBtn(p.attorney_phone)}</div>` : ""}</dd>
         </dl></div>
         <div class="sec"><h3>Tax record</h3>${p.prop_class ? `<dl class="kv">
