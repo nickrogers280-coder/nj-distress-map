@@ -6,7 +6,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 
-from .civilview import CivilViewClient, ListingRow, SaleDetail
+from .civilview import CivilViewClient, ListingRow, SaleDetail, outcome_from_history
 from .counties import CIVILVIEW_NJ
 from .db import DB
 from .parcels import ParcelClient, looks_like_entity, parse_block_lot
@@ -178,19 +178,7 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
                         continue
                     detail = cv.detail(pid)
                     stats["details_fetched"] += 1
-                    rec = {"property_id": pid, "county_id": cid, "county": cname, "list_status": row.status,
-                           "is_open": 1, "first_seen": ts, "last_seen": ts, "last_detail_at": ts}
-                    rec.update({k: v for k, v in _detail_fields(detail).items() if v not in (None, "")})
-                    rec["county"] = cname
-                    rec.setdefault("sale_date", row.sale_date)
-                    rec.setdefault("address", row.address)
-                    rec.setdefault("street", row.address)
-                    rec.setdefault("plaintiff", row.plaintiff)
-                    rec.setdefault("defendant", row.defendant)
-                    _enrich(rec, parcels, cname)
-                    rec["category"], rec["category_reason"] = classify(rec, cfg)
-                    if rec["category"] in TRACKED:
-                        locate(rec, parcels, geocoder)
+                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=True)
                     db.upsert(rec)
                     db.add_event(pid, ts, "new", baseline=stats["baseline"])
                     stats["new"] += 1
@@ -226,14 +214,117 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
                     d = cv.detail(pid)
                     stats["details_fetched"] += 1
                     final = d.latest_status or None
+                    outcome, odate, ostatus = outcome_from_history(d.status_history)
                     db.upsert({"property_id": pid, "status_history": json.dumps(d.status_history),
-                               "latest_status": final or old.get("latest_status")})
+                               "latest_status": final or old.get("latest_status"),
+                               "outcome": outcome, "outcome_date": odate, "outcome_status": ostatus})
                 except Exception as e:  # noqa: BLE001
                     log.warning("Could not fetch final status for %s: %s", pid, e)
                 db.add_event(pid, ts, "closed", old.get("latest_status"), final or "Removed from the open sale list")
+                if (db.get(pid) or {}).get("outcome") == "reo":
+                    db.add_event(pid, ts, "reo", None, (db.get(pid) or {}).get("outcome_status"))
             db.upsert({"property_id": pid, "is_open": 0, "closed_at": ts})
             stats["closed"] += 1
         db.commit()
         log.info("%s: %d open, %d new so far", cname, len(rows), stats["new"])
 
     return stats
+
+
+def build_record(cfg: dict, parcels: ParcelClient, geocoder, cid: int, cname: str, row: ListingRow,
+                 detail: SaleDetail, ts: str, is_open: bool) -> dict:
+    """A new listing record from a list row + its detail page, enriched and classified."""
+    rec = {"property_id": row.property_id, "county_id": cid, "county": cname, "list_status": row.status,
+           "is_open": 1 if is_open else 0, "first_seen": ts, "last_seen": ts, "last_detail_at": ts}
+    rec.update({k: v for k, v in _detail_fields(detail).items() if v not in (None, "")})
+    rec["county"] = cname
+    rec.setdefault("sale_date", row.sale_date)
+    rec.setdefault("address", row.address)
+    rec.setdefault("street", row.address)
+    rec.setdefault("plaintiff", row.plaintiff)
+    rec.setdefault("defendant", row.defendant)
+    _enrich(rec, parcels, cname)
+    rec["category"], rec["category_reason"] = classify(rec, cfg)
+    if rec["category"] in TRACKED:
+        locate(rec, parcels, geocoder)
+    return rec
+
+
+def run_reo(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str | None = None,
+            geocoder=None) -> dict:
+    """Find properties the foreclosing lender bought back at sheriff sale (REO).
+
+    Reads each county's Sold/Cancelled list, opens the detail page of every sale in the
+    look-back window that hasn't been checked yet, and records REO outcomes. Properties
+    already tracked from the open list just get their outcome filled in. The first pass is
+    spread over several runs (max_sold_details_per_run) and raises no alerts.
+    """
+    ts = ts or now_iso()
+    counties = cfg.get("counties") or list(CIVILVIEW_NJ)
+    lookback = int(cfg.get("reo_lookback_days", 365))
+    cap = cfg.get("max_sold_details_per_run", 1200)
+    recheck = timedelta(days=int(cfg.get("sold_recheck_days", 7)))
+    cutoff = (datetime.fromisoformat(ts) - timedelta(days=lookback)).date().isoformat()
+    baseline = db.get_meta("reo_baseline_done") != "1"
+    s = {"reo_baseline": baseline, "sold_rows": 0, "sold_details": 0, "reo_found": 0,
+         "reo_tracked": 0, "reo_errors": {}, "reo_capped": False}
+
+    for cid in counties:
+        cname = CIVILVIEW_NJ.get(cid, f"County {cid}")
+        try:
+            rows = cv.list_sold(cid)
+        except Exception as e:  # noqa: BLE001
+            log.error("%s: sold list fetch failed: %s", cname, e)
+            s["reo_errors"][cname] = str(e)
+            continue
+        s["sold_rows"] += len(rows)
+        for row in rows:
+            pid = row.property_id
+            if row.sale_date and row.sale_date < cutoff:
+                continue
+            existing = db.get(pid)
+            if existing and existing.get("outcome") in ("reo", "third_party"):
+                continue
+            chk = db.sold_checked(pid)
+            if chk and (chk.get("outcome") or
+                        datetime.fromisoformat(ts) - datetime.fromisoformat(chk["checked_at"]) < recheck):
+                continue
+            if cap is not None and s["sold_details"] >= cap:
+                s["reo_capped"] = True
+                break
+            try:
+                detail = cv.detail(pid)
+                s["sold_details"] += 1
+                outcome, odate, ostatus = outcome_from_history(detail.status_history)
+                db.mark_sold_checked(pid, cid, ts, outcome)
+                if outcome is None:
+                    continue
+                fields = {"outcome": outcome, "outcome_date": odate or row.sale_date, "outcome_status": ostatus,
+                          "status_history": json.dumps(detail.status_history),
+                          "latest_status": detail.latest_status}
+                if existing:
+                    db.upsert({"property_id": pid, **fields})
+                    rec = {**existing, **fields}
+                elif outcome == "reo":
+                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=False)
+                    rec.update(fields)
+                    rec["closed_at"] = ts
+                    db.upsert(rec)
+                else:
+                    continue
+                if outcome == "reo":
+                    s["reo_found"] += 1
+                    if rec.get("category") in TRACKED:
+                        s["reo_tracked"] += 1
+                        db.add_event(pid, ts, "reo", None, ostatus, baseline=baseline)
+            except Exception as e:  # noqa: BLE001
+                log.exception("%s: failed on sold property %s: %s", cname, pid, e)
+        db.commit()
+        log.info("%s: %d sold/cancelled rows; %d REO so far", cname, len(rows), s["reo_found"])
+        if s["reo_capped"]:
+            break
+
+    if baseline and not s["reo_capped"] and not s["reo_errors"]:
+        db.set_meta("reo_baseline_done", "1")
+    db.commit()
+    return s

@@ -54,6 +54,9 @@ DETAIL_LABELS = {
     "good faith upset": "upset",
     "upset amount": "upset",
     "upset": "upset",
+    "approx. upset": "upset",
+    "approx upset": "upset",
+    "approximate upset": "upset",
     "minimum bid": "upset",
     "attorney": "attorney",
     "attorney phone": "attorney_phone",
@@ -247,6 +250,68 @@ def parse_detail(html: str, property_id: str) -> SaleDetail:
     return d
 
 
+def sold_form_data(html: str) -> tuple[dict, str]:
+    """Build the search-form submission that returns the Sold/Cancelled list."""
+    soup = BeautifulSoup(html, "lxml")
+    form = soup.find("form")
+    data: dict[str, str] = {}
+    action = "/Sales/SalesSearch"
+    if form is not None:
+        action = form.get("action") or action
+        for el in form.find_all(["input", "select", "textarea"]):
+            name = el.get("name")
+            if not name:
+                continue
+            if el.name == "select":
+                opts = el.find_all("option")
+                chosen = next((o for o in opts if o.has_attr("selected")), opts[0] if opts else None)
+                data[name] = (chosen.get("value") if chosen is not None and chosen.has_attr("value")
+                              else (chosen.get_text(strip=True) if chosen is not None else ""))
+            elif (el.get("type") or "").lower() in ("radio", "checkbox"):
+                if el.has_attr("checked"):
+                    data[name] = el.get("value", "on")
+            elif (el.get("type") or "").lower() not in ("submit", "button", "reset"):
+                data[name] = el.get("value", "")
+    data["IsOpen"] = "false"
+    return data, action
+
+
+# Sale outcomes, as worded by the different sheriff offices, e.g.
+#   REO:        "Purchased - Plaintiff", "Plaintiff Buy Back", "Sold to Plaintiff - Assigned",
+#               "Purchased at Auction by Plaintiff (Buy Back)", "Purchased - Buy Back",
+#               "Purchased - Plaintiff FHA/HUD CAFMV", "Assignment of Bid"
+#   3rd party:  "Purchased - 3rd Party", "Sold to Third Party Purchaser", "Purchased at Auction by 3rd Party"
+_SALE_WORDS = re.compile(r"purchas|\bsold\b|struck|buy\s*-?\s*back|assign", re.I)
+_REO_WORDS = re.compile(r"plaintiff|buy\s*-?\s*back|assignment of bid|\bassigned\b", re.I)
+_THIRD_WORDS = re.compile(r"\b3rd\b|third", re.I)
+_CANCEL_WORDS = re.compile(r"cancel|settled|vacat|withdr|dismiss|satisf|reinstat|redeem", re.I)
+
+
+def sale_outcome(status: str | None) -> str | None:
+    """Classify one status line: 'reo', 'third_party', 'cancelled', or None (not an outcome)."""
+    s = status or ""
+    if re.search(r"adjourn", s, re.I):
+        return None
+    if _SALE_WORDS.search(s):
+        if _THIRD_WORDS.search(s):
+            return "third_party"
+        if _REO_WORDS.search(s):
+            return "reo"
+        return None  # e.g. bare "Purchased": buyer unknown
+    if _CANCEL_WORDS.search(s):
+        return "cancelled"
+    return None
+
+
+def outcome_from_history(history: list[tuple[str, str | None]]) -> tuple[str | None, str | None, str | None]:
+    """(outcome, date, status text) of the latest status line that is a sale outcome."""
+    for status, date in reversed(history or []):
+        o = sale_outcome(status)
+        if o:
+            return o, date, status
+    return None, None, None
+
+
 # ---------------------------------------------------------------- HTTP client
 
 class CivilViewClient:
@@ -260,13 +325,19 @@ class CivilViewClient:
         self._last = 0.0
 
     def _get(self, path: str) -> str:
+        return self._request("GET", path)
+
+    def _post(self, path: str, data: dict) -> str:
+        return self._request("POST", path, data)
+
+    def _request(self, method: str, path: str, data: dict | None = None) -> str:
         url = urljoin(BASE, path)
         for attempt in range(1, self.retries + 1):
             wait = self.delay - (time.monotonic() - self._last)
             if wait > 0:
                 time.sleep(wait)
             try:
-                r = self.s.get(url, timeout=self.timeout)
+                r = self.s.request(method, url, data=data, timeout=self.timeout)
                 self._last = time.monotonic()
                 r.raise_for_status()
                 return r.text
@@ -280,6 +351,16 @@ class CivilViewClient:
 
     def list_open(self, county_id: int) -> list[ListingRow]:
         return parse_list(self._get(f"/Sales/SalesSearch?countyId={county_id}"), county_id)
+
+    def list_sold(self, county_id: int) -> list[ListingRow]:
+        """The county's 'Sold/Cancelled' list (usually the past 12 months of sale outcomes).
+
+        The site keeps the county in the session, so load the county page first, then submit
+        its search form with IsOpen=false.
+        """
+        page = self._get(f"/Sales/SalesSearch?countyId={county_id}")
+        data, action = sold_form_data(page)
+        return parse_list(self._post(action, data), county_id)
 
     def detail(self, property_id: str) -> SaleDetail:
         return parse_detail(self._get(f"/Sales/SaleDetails?PropertyId={property_id}"), property_id)

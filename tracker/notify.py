@@ -26,6 +26,7 @@ KIND_LABEL = {
     "sale_date": "Sale date",
     "upset": "Upset price",
     "judgment": "Judgment",
+    "reo": "Bank-owned (REO)",
 }
 
 

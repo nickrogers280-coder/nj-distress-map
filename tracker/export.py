@@ -17,7 +17,7 @@ PROPERTY_FIELDS = [
     "net_value", "land_val", "imprvt_val", "last_yr_tax", "bldg_desc", "land_desc", "calc_acre",
     "yr_constr", "last_sale_price", "last_sale_date", "sale_date", "latest_status", "sheriff_number",
     "court_case", "plaintiff", "defendant", "judgment", "upset", "attorney", "attorney_phone",
-    "description", "lat", "lon", "geo_source",
+    "description", "lat", "lon", "geo_source", "outcome", "outcome_date", "outcome_status",
 ]
 
 CSV_COLUMNS = [
@@ -25,18 +25,22 @@ CSV_COLUMNS = [
     "class_label", "net_value", "calc_acre", "bldg_desc", "yr_constr", "sale_date", "latest_status",
     "sheriff_number", "court_case", "plaintiff", "defendant", "judgment", "upset", "attorney",
     "attorney_phone", "last_sale_price", "last_sale_date", "lat", "lon", "first_seen", "property_id",
+    "outcome", "outcome_date",
 ]
 
 
-def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, closed_days: int = 45) -> dict:
+def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, closed_days: int = 45,
+                   reo_days: int = 365) -> dict:
     now = now or datetime.now(timezone.utc)
     alert_cutoff = (now - timedelta(days=alert_days)).isoformat(timespec="seconds")
     closed_cutoff = (now - timedelta(days=closed_days)).isoformat(timespec="seconds")
+    reo_cutoff = (now - timedelta(days=reo_days)).date().isoformat()
     c = db.conn
 
     rows = c.execute(
         f"""SELECT * FROM listings WHERE category IN ('target','possible')
-            AND (is_open=1 OR closed_at >= ?) ORDER BY sale_date""", (closed_cutoff,)).fetchall()
+            AND (is_open=1 OR closed_at >= ? OR (outcome='reo' AND outcome_date >= ?))
+            ORDER BY sale_date""", (closed_cutoff, reo_cutoff)).fetchall()
     props = []
     ids = set()
     for r in rows:
@@ -59,16 +63,24 @@ def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, cl
     run = {"at": last["started"], **json.loads(last["stats"])} if last else None
     return {
         "generated_at": now.isoformat(timespec="seconds"),
-        "last_run": {k: run[k] for k in ("at", "counties", "county_errors", "baseline")} if run else None,
+        "last_run": {k: run.get(k) for k in ("at", "counties", "county_errors", "baseline", "reo_errors",
+                                             "reo_baseline", "reo_capped")} if run else None,
         "properties": props,
         "alerts": alerts,
     }
 
 
-def export_all(db: DB, out_dir: Path) -> None:
+def export_all(db: DB, out_dir: Path, reo_days: int = 365) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "map.json").write_text(json.dumps(build_map_data(db), separators=(",", ":"), default=str))
+    (out_dir / "map.json").write_text(json.dumps(build_map_data(db, reo_days=reo_days),
+                                                 separators=(",", ":"), default=str))
     with open(out_dir / "leads.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         w.writeheader()
         w.writerows(db.open_leads())
+    reo = [dict(r) for r in db.conn.execute(
+        "SELECT * FROM listings WHERE outcome='reo' AND category IN ('target','possible') ORDER BY outcome_date DESC")]
+    with open(out_dir / "reo.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(reo)
