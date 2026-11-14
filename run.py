@@ -36,6 +36,25 @@ def load_config(path: Path) -> dict:
 
 
 
+def backfill_upset(db: DB) -> None:
+    """Recover upset prices saved under labels the parser didn't know yet (e.g. 'Approx. Upset*')."""
+    from tracker.civilview import DETAIL_LABELS, parse_money
+    keys = [k for k, v in DETAIL_LABELS.items() if v == "upset"]
+    rows = db.conn.execute("SELECT property_id, extra FROM listings WHERE upset IS NULL AND extra IS NOT NULL").fetchall()
+    for pid, extra in rows:
+        try:
+            e = json.loads(extra)
+        except json.JSONDecodeError:
+            continue
+        for k in keys:
+            if e.get(k):
+                val = parse_money(e[k])
+                if val is not None:
+                    db.conn.execute("UPDATE listings SET upset=? WHERE property_id=?", (val, pid))
+                break
+    db.commit()
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=str(ROOT / "config.yaml"))
@@ -43,6 +62,7 @@ def main(argv=None) -> int:
     ap.add_argument("--counties", nargs="*", type=int, help="CivilView county IDs (default: config)")
     ap.add_argument("--max-new", type=int, help="Cap new-listing detail fetches (for testing)")
     ap.add_argument("--no-email", action="store_true")
+    ap.add_argument("--no-reo", action="store_true", help="Skip the bank-owned (REO) pass")
     ap.add_argument("--preview", default=str(ROOT / "data" / "last_email.html"))
     args = ap.parse_args(argv)
 
@@ -59,8 +79,12 @@ def main(argv=None) -> int:
     parcels = ParcelClient()
     db = DB(args.db)
 
+    backfill_upset(db)
     started = pipeline.now_iso()
-    stats = pipeline.run(cfg, cv, parcels, db, ts=started, geocoder=Geocoder())
+    geocoder = Geocoder()
+    stats = pipeline.run(cfg, cv, parcels, db, ts=started, geocoder=geocoder)
+    if cfg.get("reo_enabled", True) and not args.no_reo:
+        stats.update(pipeline.run_reo(cfg, cv, parcels, db, ts=started, geocoder=geocoder))
     report = notify.build_report(db, stats, cfg, started)
     html = notify.render(report)
     Path(args.preview).parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +103,7 @@ def main(argv=None) -> int:
 
     db.log_run(started, pipeline.now_iso(), stats)
     db.commit()
-    export_all(db, Path(args.db).parent)
+    export_all(db, Path(args.db).parent, reo_days=int(cfg.get("reo_lookback_days", 365)))
     db.close()
     logging.info("Done: %s", json.dumps({k: v for k, v in stats.items() if k != "counties"}))
     return 1 if stats["county_errors"] and not stats["counties"] else 0

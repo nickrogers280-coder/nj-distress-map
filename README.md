@@ -10,6 +10,9 @@ on a county sheriff sale list. It updates itself every morning:
   debt-to-value, sale date with countdown, owner, lender, foreclosure attorney, docket number,
   tax-record details (class, building, acreage, year built, last sale, taxes), full status history,
   the parcel boundary drawn on the imagery, and links to the sheriff listing, Google Maps and Street View.
+- **Bank-owned (REO)**: commercial properties the foreclosing lender bought back at sheriff sale in
+  the past 12 months show as purple diamonds, with the date, the lender that now owns it and the
+  former owner. New buy-backs appear as alerts.
 - **Filters**: property type (commercial, industrial, apartments, land, needs review), county,
   upcoming sale window, search by address/owner/lender/docket, and properties that came off the list.
 
@@ -27,7 +30,12 @@ on a county sheriff sale list. It updates itself every morning:
    apartments (4C) are kept. Unmatched listings owned by an LLC/corp show as "Needs review" and are
    placed by address. *Owner names are redacted in state data (Daniel's Law), so "Owner" is the
    foreclosure defendant.*
-4. **Changes**: on later runs it re-reads only tracked properties, records adjournments, new sale dates,
+4. **Bank-owned (REO)**: it also reads each county's "Sold/Cancelled" list (about the past year)
+   and opens each sale to see who bought it. Sales marked as bought by the plaintiff ("Purchased -
+   Plaintiff", "Plaintiff Buy Back", "Sold to Plaintiff", "Assignment of Bid", ...) are added to the map
+   as REO. The first pass covers ~4,000 past sales, so it is spread over the first few daily runs
+   (1,200 a day); after that only new sales are checked.
+5. **Changes**: on later runs it re-reads only tracked properties, records adjournments, new sale dates,
    upset changes and removals, then republishes the website.
 
 The first run reads every listing (~1,600) and takes about an hour. Daily runs take a few minutes.
@@ -60,6 +68,7 @@ Verification, then create one under "App passwords"), and `ALERT_TO` (comma-sepa
 - `target_classes`: which tax classes count (default 1, 4A, 4B, 4C)
 - `min_assessed_value`: ignore smaller properties
 - `include_possible`: include unmatched LLC/corp-owned listings as "Needs review"
+- `reo_enabled`, `reo_lookback_days`, `max_sold_details_per_run`: the bank-owned (REO) layer
 
 ## If the county sites block GitHub
 If the site footer says counties "could not be read" day after day, run the scan from your own PC:
@@ -70,6 +79,7 @@ Task Scheduler. (Publishing from a PC run needs a `git push` afterwards; ask and
 - `site/index.html`: the map website (one file; opens with sample data if no live data is present)
 - `data/map.json`: what the map reads, rewritten every run
 - `data/leads.csv`: open commercial leads as a spreadsheet
+- `data/reo.csv`: bank-owned (REO) commercial properties as a spreadsheet
 - `data/tracker.db`: the full history (SQLite)
 
 ## Testing locally

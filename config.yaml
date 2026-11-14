@@ -17,6 +17,12 @@ min_assessed_value: 0
 include_possible: true
 possible_min_amount: 0        # minimum judgment or upset price for those
 
+# Bank-owned (REO): properties the foreclosing lender bought back at sheriff sale.
+reo_enabled: true
+reo_lookback_days: 365        # how far back to show REO on the map
+max_sold_details_per_run: 1200  # first pass is spread over a few days at this pace
+sold_recheck_days: 7          # re-check sales whose outcome isn't posted yet
+
 # How often to re-read the detail page of tracked properties to catch status changes.
 refresh_tracked_details_hours: 20
 
