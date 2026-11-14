@@ -1,0 +1,84 @@
+name: NJ distress tracker
+
+on:
+  schedule:
+    # 11:41 UTC = 6:41 AM EST / 7:41 AM EDT. Counties post updates the prior evening.
+    - cron: "41 11 * * *"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: ["site/**"]     # republish the map when the page itself changes
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: tracker
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240   # the first (baseline) run reads ~1,600 listings; later runs take minutes
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Scan sheriff sale lists and update map data
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+          CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
+        run: python run.py
+
+      - name: Commit updated data
+        if: always()
+        run: |
+          git config user.name "tracker-bot"
+          git config user.email "tracker-bot@users.noreply.github.com"
+          git add data/
+          git diff --cached --quiet || git commit -m "data: update $(date -u +%Y-%m-%d)"
+          git push
+
+  publish:
+    needs: scan
+    if: always() && (needs.scan.result == 'success' || needs.scan.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main          # pick up the data commit made by the scan job
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/data
+          cp site/index.html _site/index.html
+          if [ -f data/map.json ]; then cp data/map.json _site/data/map.json; fi
+          if [ -f data/leads.csv ]; then cp data/leads.csv _site/data/leads.csv; fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
