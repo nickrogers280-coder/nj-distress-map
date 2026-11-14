@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html><head><title>Sales Listing</title></head>
+<body>
+<div class="container body-content">
+  <h4>Hudson County, NJ - Foreclosure Sales Listing (last updated: 11/13/2026 8:00:00 PM)</h4>
+  <form action="/Sales/SalesSearch" method="post">
+    <fieldset>
+      <input id="open-radio" name="IsOpen" type="radio" value="true" checked> Open
+      <input id="sold-radio" name="IsOpen" type="radio" value="false"> Sold\Cancelled
+    </fieldset>
+    <input type="submit" value="Search">
+  </form>
+  <table class="table"><tr><td>search form layout table</td></tr></table>
+  <h4>Click the Details link next to the property to view additional information. (3 search results)</h4>
+  <table class="table table-striped ">
+    <tr>
+      <th></th><th>Sheriff #</th><th>Sales Date</th><th>Address</th><th>Plaintiff</th><th>Defendant</th>
+    </tr>
+    <tr>
+      <td><a href="/Sales/SaleDetails?PropertyId=2243981658">View Details</a></td>
+      <td>20052781</td><td>11/19/2026</td>
+      <td>1906 PATERSON PLANK ROAD UNIT 3D NORTH BERGEN NJ 07047</td>
+      <td>U.S. BANK TRUST NATIONAL ASSOCIATION, NOT IN ITS INDIVIDUAL CAPACITY BUT SOLELY AS OWNER TRUSTEE FOR RCF 2 ACQUISITION TRUST</td>
+      <td>SYED KHABOOR; SAIRA KHABOOR A/K/A SAIRA OZEERBANU ALI; HACKENSACK UNIVERSITY MED CTR</td>
+    </tr>
+    <tr>
+      <td><a href="/Sales/SaleDetails?PropertyId=2243990001">View Details</a></td>
+      <td>20061234</td><td>12/10/2026</td>
+      <td>455 TONNELLE AVENUE JERSEY CITY NJ 07307</td>
+      <td>VALLEY NATIONAL BANK</td>
+      <td>TONNELLE HOLDINGS LLC; JOHN DOE; MIDLAND FUNDING LLC</td>
+    </tr>
+    <tr>
+      <td><a href="/Sales/SaleDetails?PropertyId=2243990002">View Details</a></td>
+      <td>20061999</td><td>12/10/2026</td>
+      <td>88 HARBOR DRIVE BAYONNE NJ 07002</td>
+      <td>ACME CAPITAL LENDING, LLC</td>
+      <td>HARBOR DRIVE PARTNERS, LLC, ET AL.</td>
+    </tr>
+  </table>
+</div>
+</body></html>
