@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>NJ Distress Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-height map console. Sidebar (alerts + properties) left, satellite map fills the rest,
+   property file slides in over the map's right edge. Dark by design so pins read over imagery. */
+:root {
+  --ground: #121a23;
+  --panel: #18222d;
+  --panel-2: #1f2b38;
+  --line: #2b3a4a;
+  --ink: #e7edf3;
+  --ink-2: #a3b1bf;
+  --ink-3: #74859a;
+  --pin: #47c7ec;          /* tracked commercial */
+  --pin-possible: #f0a63a; /* needs review */
+  --pin-closed: #8794a3;
+  --alert: #ff5c72;
+  --parcel: #ffe066;       /* tax-map yellow, for parcel outlines */
+  --ok: #5fd39a;
+  --font-head: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; }
+[hidden] { display: none !important; }
+body { background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 14px; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+a { color: var(--pin); }
+:focus-visible { outline: 2px solid var(--pin); outline-offset: 2px; }
+
+/* Leaflet 1.9.4 (BSD-2-Clause) */
+ .leaflet-pane, .leaflet-tile, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-tile-container, .leaflet-pane > svg, .leaflet-pane > canvas, .leaflet-zoom-box, .leaflet-image-layer, .leaflet-layer{position: absolute;left: 0;top: 0;} .leaflet-container{overflow: hidden;} .leaflet-tile, .leaflet-marker-icon, .leaflet-marker-shadow{-webkit-user-select: none;-moz-user-select: none;user-select: none;-webkit-user-drag: none;} .leaflet-tile::selection{background: transparent;} .leaflet-safari .leaflet-tile{image-rendering: -webkit-optimize-contrast;} .leaflet-safari .leaflet-tile-container{width: 1600px;height: 1600px;-webkit-transform-origin: 0 0;} .leaflet-marker-icon, .leaflet-marker-shadow{display: block;} .leaflet-container .leaflet-overlay-pane svg{max-width: none !important;max-height: none !important;} .leaflet-container .leaflet-marker-pane img, .leaflet-container .leaflet-shadow-pane img, .leaflet-container .leaflet-tile-pane img, .leaflet-container img.leaflet-image-layer, .leaflet-container .leaflet-tile{max-width: none !important;max-height: none !important;width: auto;padding: 0;} .leaflet-container img.leaflet-tile{mix-blend-mode: plus-lighter;} .leaflet-container.leaflet-touch-zoom{-ms-touch-action: pan-x pan-y;touch-action: pan-x pan-y;} .leaflet-container.leaflet-touch-drag{-ms-touch-action: pinch-zoom;touch-action: none;touch-action: pinch-zoom;} .leaflet-container.leaflet-touch-drag.leaflet-touch-zoom{-ms-touch-action: none;touch-action: none;} .leaflet-container{-webkit-tap-highlight-color: transparent;} .leaflet-container a{-webkit-tap-highlight-color: rgba(51, 181, 229, 0.4);} .leaflet-tile{filter: inherit;visibility: hidden;} .leaflet-tile-loaded{visibility: inherit;} .leaflet-zoom-box{width: 0;height: 0;-moz-box-sizing: border-box;box-sizing: border-box;z-index: 800;} .leaflet-overlay-pane svg{-moz-user-select: none;} .leaflet-pane{z-index: 400;} .leaflet-tile-pane{z-index: 200;} .leaflet-overlay-pane{z-index: 400;} .leaflet-shadow-pane{z-index: 500;} .leaflet-marker-pane{z-index: 600;} .leaflet-tooltip-pane{z-index: 650;} .leaflet-popup-pane{z-index: 700;} .leaflet-map-pane canvas{z-index: 100;} .leaflet-map-pane svg{z-index: 200;} .leaflet-vml-shape{width: 1px;height: 1px;} .lvml{behavior: url(#default#VML);display: inline-block;position: absolute;} .leaflet-control{position: relative;z-index: 800;pointer-events: visiblePainted;pointer-events: auto;} .leaflet-top, .leaflet-bottom{position: absolute;z-index: 1000;pointer-events: none;} .leaflet-top{top: 0;} .leaflet-right{right: 0;} .leaflet-bottom{bottom: 0;} .leaflet-left{left: 0;} .leaflet-control{float: left;clear: both;} .leaflet-right .leaflet-control{float: right;} .leaflet-top .leaflet-control{margin-top: 10px;} .leaflet-bottom .leaflet-control{margin-bottom: 10px;} .leaflet-left .leaflet-control{margin-left: 10px;} .leaflet-right .leaflet-control{margin-right: 10px;} .leaflet-fade-anim .leaflet-popup{opacity: 0;-webkit-transition: opacity 0.2s linear;-moz-transition: opacity 0.2s linear;transition: opacity 0.2s linear;} .leaflet-fade-anim .leaflet-map-pane .leaflet-popup{opacity: 1;} .leaflet-zoom-animated{-webkit-transform-origin: 0 0;-ms-transform-origin: 0 0;transform-origin: 0 0;} svg.leaflet-zoom-animated{will-change: transform;} .leaflet-zoom-anim .leaflet-zoom-animated{-webkit-transition: -webkit-transform 0.25s cubic-bezier(0,0,0.25,1);-moz-transition: -moz-transform 0.25s cubic-bezier(0,0,0.25,1);transition: transform 0.25s cubic-bezier(0,0,0.25,1);} .leaflet-zoom-anim .leaflet-tile, .leaflet-pan-anim .leaflet-tile{-webkit-transition: none;-moz-transition: none;transition: none;} .leaflet-zoom-anim .leaflet-zoom-hide{visibility: hidden;} .leaflet-interactive{cursor: pointer;} .leaflet-grab{cursor: -webkit-grab;cursor: -moz-grab;cursor: grab;} .leaflet-crosshair, .leaflet-crosshair .leaflet-interactive{cursor: crosshair;} .leaflet-popup-pane, .leaflet-control{cursor: auto;} .leaflet-dragging .leaflet-grab, .leaflet-dragging .leaflet-grab .leaflet-interactive, .leaflet-dragging .leaflet-marker-draggable{cursor: move;cursor: -webkit-grabbing;cursor: -moz-grabbing;cursor: grabbing;} .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-image-layer, .leaflet-pane > svg path, .leaflet-tile-container{pointer-events: none;} .leaflet-marker-icon.leaflet-interactive, .leaflet-image-layer.leaflet-interactive, .leaflet-pane > svg path.leaflet-interactive, svg.leaflet-image-layer.leaflet-interactive path{pointer-events: visiblePainted;pointer-events: auto;} .leaflet-container{background: #ddd;outline-offset: 1px;} .leaflet-container a{color: #0078A8;} .leaflet-zoom-box{border: 2px dotted #38f;background: rgba(255,255,255,0.5);} .leaflet-container{font-family: "Helvetica Neue", Arial, Helvetica, sans-serif;font-size: 12px;font-size: 0.75rem;line-height: 1.5;} .leaflet-bar{box-shadow: 0 1px 5px rgba(0,0,0,0.65);border-radius: 4px;} .leaflet-bar a{background-color: #fff;border-bottom: 1px solid #ccc;width: 26px;height: 26px;line-height: 26px;display: block;text-align: center;text-decoration: none;color: black;} .leaflet-bar a, .leaflet-control-layers-toggle{background-position: 50% 50%;background-repeat: no-repeat;display: block;} .leaflet-bar a:hover, .leaflet-bar a:focus{background-color: #f4f4f4;} .leaflet-bar a:first-child{border-top-left-radius: 4px;border-top-right-radius: 4px;} .leaflet-bar a:last-child{border-bottom-left-radius: 4px;border-bottom-right-radius: 4px;border-bottom: none;} .leaflet-bar a.leaflet-disabled{cursor: default;background-color: #f4f4f4;color: #bbb;} .leaflet-touch .leaflet-bar a{width: 30px;height: 30px;line-height: 30px;} .leaflet-touch .leaflet-bar a:first-child{border-top-left-radius: 2px;border-top-right-radius: 2px;} .leaflet-touch .leaflet-bar a:last-child{border-bottom-left-radius: 2px;border-bottom-right-radius: 2px;} .leaflet-control-zoom-in, .leaflet-control-zoom-out{font: bold 18px 'Lucida Console', Monaco, monospace;text-indent: 1px;} .leaflet-touch .leaflet-control-zoom-in, .leaflet-touch .leaflet-control-zoom-out{font-size: 22px;} .leaflet-control-layers{box-shadow: 0 1px 5px rgba(0,0,0,0.4);background: #fff;border-radius: 5px;} .leaflet-control-layers-toggle{background-image: url(images/layers.png);width: 36px;height: 36px;} .leaflet-retina .leaflet-control-layers-toggle{background-image: url(images/layers-2x.png);background-size: 26px 26px;} .leaflet-touch .leaflet-control-layers-toggle{width: 44px;height: 44px;} .leaflet-control-layers .leaflet-control-layers-list, .leaflet-control-layers-expanded .leaflet-control-layers-toggle{display: none;} .leaflet-control-layers-expanded .leaflet-control-layers-list{display: block;position: relative;} .leaflet-control-layers-expanded{padding: 6px 10px 6px 6px;color: #333;background: #fff;} .leaflet-control-layers-scrollbar{overflow-y: scroll;overflow-x: hidden;padding-right: 5px;} .leaflet-control-layers-selector{margin-top: 2px;position: relative;top: 1px;} .leaflet-control-layers label{display: block;font-size: 13px;font-size: 1.08333em;} .leaflet-control-layers-separator{height: 0;border-top: 1px solid #ddd;margin: 5px -10px 5px -6px;} .leaflet-default-icon-path{background-image: url(images/marker-icon.png);} .leaflet-container .leaflet-control-attribution{background: #fff;background: rgba(255, 255, 255, 0.8);margin: 0;} .leaflet-control-attribution, .leaflet-control-scale-line{padding: 0 5px;color: #333;line-height: 1.4;} .leaflet-control-attribution a{text-decoration: none;} .leaflet-control-attribution a:hover, .leaflet-control-attribution a:focus{text-decoration: underline;} .leaflet-attribution-flag{display: inline !important;vertical-align: baseline !important;width: 1em;height: 0.6669em;} .leaflet-left .leaflet-control-scale{margin-left: 5px;} .leaflet-bottom .leaflet-control-scale{margin-bottom: 5px;} .leaflet-control-scale-line{border: 2px solid #777;border-top: none;line-height: 1.1;padding: 2px 5px 1px;white-space: nowrap;-moz-box-sizing: border-box;box-sizing: border-box;background: rgba(255, 255, 255, 0.8);text-shadow: 1px 1px #fff;} .leaflet-control-scale-line:not(:first-child){border-top: 2px solid #777;border-bottom: none;margin-top: -2px;} .leaflet-control-scale-line:not(:first-child):not(:last-child){border-bottom: 2px solid #777;} .leaflet-touch .leaflet-control-attribution, .leaflet-touch .leaflet-control-layers, .leaflet-touch .leaflet-bar{box-shadow: none;} .leaflet-touch .leaflet-control-layers, .leaflet-touch .leaflet-bar{border: 2px solid rgba(0,0,0,0.2);background-clip: padding-box;} .leaflet-popup{position: absolute;text-align: center;margin-bottom: 20px;} .leaflet-popup-content-wrapper{padding: 1px;text-align: left;border-radius: 12px;} .leaflet-popup-content{margin: 13px 24px 13px 20px;line-height: 1.3;font-size: 13px;font-size: 1.08333em;min-height: 1px;} .leaflet-popup-content p{margin: 17px 0;margin: 1.3em 0;} .leaflet-popup-tip-container{width: 40px;height: 20px;position: absolute;left: 50%;margin-top: -1px;margin-left: -20px;overflow: hidden;pointer-events: none;} .leaflet-popup-tip{width: 17px;height: 17px;padding: 1px;margin: -10px auto 0;pointer-events: auto;-webkit-transform: rotate(45deg);-moz-transform: rotate(45deg);-ms-transform: rotate(45deg);transform: rotate(45deg);} .leaflet-popup-content-wrapper, .leaflet-popup-tip{background: white;color: #333;box-shadow: 0 3px 14px rgba(0,0,0,0.4);} .leaflet-container a.leaflet-popup-close-button{position: absolute;top: 0;right: 0;border: none;text-align: center;width: 24px;height: 24px;font: 16px/24px Tahoma, Verdana, sans-serif;color: #757575;text-decoration: none;background: transparent;} .leaflet-container a.leaflet-popup-close-button:hover, .leaflet-container a.leaflet-popup-close-button:focus{color: #585858;} .leaflet-popup-scrolled{overflow: auto;} .leaflet-oldie .leaflet-popup-content-wrapper{-ms-zoom: 1;} .leaflet-oldie .leaflet-popup-tip{width: 24px;margin: 0 auto;-ms-filter: "progid:DXImageTransform.Microsoft.Matrix(M11=0.70710678, M12=0.70710678, M21=-0.70710678, M22=0.70710678)";filter: progid:DXImageTransform.Microsoft.Matrix(M11=0.70710678, M12=0.70710678, M21=-0.70710678, M22=0.70710678);} .leaflet-oldie .leaflet-control-zoom, .leaflet-oldie .leaflet-control-layers, .leaflet-oldie .leaflet-popup-content-wrapper, .leaflet-oldie .leaflet-popup-tip{border: 1px solid #999;} .leaflet-div-icon{background: #fff;border: 1px solid #666;} .leaflet-tooltip{position: absolute;padding: 6px;background-color: #fff;border: 1px solid #fff;border-radius: 3px;color: #222;white-space: nowrap;-webkit-user-select: none;-moz-user-select: none;-ms-user-select: none;user-select: none;pointer-events: none;box-shadow: 0 1px 3px rgba(0,0,0,0.4);} .leaflet-tooltip.leaflet-interactive{cursor: pointer;pointer-events: auto;} .leaflet-tooltip-top:before, .leaflet-tooltip-bottom:before, .leaflet-tooltip-left:before, .leaflet-tooltip-right:before{position: absolute;pointer-events: none;border: 6px solid transparent;background: transparent;content: "";} .leaflet-tooltip-bottom{margin-top: 6px;} .leaflet-tooltip-top{margin-top: -6px;} .leaflet-tooltip-bottom:before, .leaflet-tooltip-top:before{left: 50%;margin-left: -6px;} .leaflet-tooltip-top:before{bottom: 0;margin-bottom: -12px;border-top-color: #fff;} .leaflet-tooltip-bottom:before{top: 0;margin-top: -12px;margin-left: -6px;border-bottom-color: #fff;} .leaflet-tooltip-left{margin-left: -6px;} .leaflet-tooltip-right{margin-left: 6px;} .leaflet-tooltip-left:before, .leaflet-tooltip-right:before{top: 50%;margin-top: -6px;} .leaflet-tooltip-left:before{right: 0;margin-right: -12px;border-left-color: #fff;} .leaflet-tooltip-right:before{left: 0;margin-left: -12px;border-right-color: #fff;} @media print{.leaflet-control{-webkit-print-color-adjust: exact;print-color-adjust: exact;}} 
+
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+.topbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.brand h1 { margin: 0; font-family: var(--font-head); font-weight: 700; font-size: 19px; letter-spacing: .01em; }
+.brand .sub { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.stats { display: flex; gap: 18px; margin-left: auto; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.stat b { font-family: var(--font-data); font-weight: 500; font-size: 16px; font-variant-numeric: tabular-nums; }
+.stat span { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.stat.hot b { color: var(--alert); }
+.layer-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.layer-toggle button { background: none; border: 0; padding: 6px 10px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.layer-toggle button[aria-pressed="true"] { background: var(--panel-2); color: var(--ink); }
+.panel-btn { display: none; }
+
+.body { position: relative; display: grid; grid-template-columns: 360px 1fr; min-height: 0; }
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border-right: 1px solid var(--line); }
+.filters { display: grid; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.search { width: 100%; box-sizing: border-box; background: var(--ground); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.search::placeholder { color: var(--ink-3); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); background: none; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--pin)); }
+.chip[aria-pressed="true"] { color: var(--ink); background: var(--panel-2); border-color: color-mix(in srgb, var(--c, var(--pin)) 55%, var(--line)); }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row select { flex: 1 1 120px; min-width: 0; background: var(--ground); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 0; font-family: var(--font-head); font-weight: 600; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); cursor: pointer; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--pin); }
+.tabs .count { font-family: var(--font-data); font-weight: 400; margin-left: 4px; color: var(--ink-3); }
+.list { flex: 1; overflow-y: auto; min-height: 0; }
+.item { display: grid; gap: 3px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 11px 14px; cursor: pointer; }
+.item:hover, .item[aria-current="true"] { background: var(--panel-2); }
+.item .top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.item .addr { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.item .meta { font-size: 12px; color: var(--ink-2); }
+.item .change { font-size: 12px; color: var(--ink); }
+.item .when { margin-left: auto; font-size: 11px; color: var(--ink-3); white-space: nowrap; font-family: var(--font-data); }
+.unseen { width: 7px; height: 7px; border-radius: 50%; background: var(--alert); flex: none; }
+.tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-family: var(--font-head); font-weight: 600; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; background: color-mix(in srgb, var(--t, var(--alert)) 22%, transparent); color: var(--t, var(--alert)); white-space: nowrap; }
+.empty { padding: 28px 18px; color: var(--ink-3); font-size: 13px; line-height: 1.5; }
+.foot { padding: 10px 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-3); line-height: 1.5; }
+.foot .err { color: var(--alert); }
+
+#map { min-height: 0; height: 100%; background: #0b1016; }
+.leaflet-container { font-family: var(--font-body); }
+.leaflet-control-attribution { background: rgba(18,26,35,.75) !important; color: var(--ink-3) !important; font-size: 10px; }
+.leaflet-control-attribution a { color: var(--ink-2) !important; }
+.leaflet-bar a { background: var(--panel) !important; color: var(--ink) !important; border-color: var(--line) !important; }
+
+/* pins */
+.pin { position: relative; display: block; width: 16px; height: 16px; }
+.pin i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); border: 2px solid #0b1016; box-shadow: 0 0 0 1.5px var(--c), 0 2px 6px rgba(0,0,0,.6); }
+.pin.target { --c: var(--pin); }
+.pin.possible { --c: var(--pin-possible); }
+.pin.closed { --c: var(--pin-closed); }
+.pin.alert::before { content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 2px solid var(--alert); animation: pulse 1.8s ease-out infinite; }
+#map:not(.show-flags) .pin .flag { display: none; }
+.pin .flag { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 2px 7px; border-radius: 3px; background: var(--alert); color: #fff; font-family: var(--font-head); font-weight: 700; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+.pin .flag::after { content: ""; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: var(--alert); }
+.pin.selected i { transform: scale(1.35); }
+@keyframes pulse { 0% { transform: scale(.5); opacity: 1; } 100% { transform: scale(1.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .pin.alert::before { animation: none; opacity: .8; } }
+
+/* property file */
+.detail { position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px)); bottom: 12px; width: 380px; max-width: calc(100% - 24px); z-index: 900;
+  display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.55); overflow: hidden; }
+.d-head { padding: 14px 16px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.d-head .x { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; font-size: 16px; line-height: 1; }
+.d-head h2 { margin: 0; padding-right: 36px; font-family: var(--font-head); font-weight: 700; font-size: 20px; line-height: 1.2; text-wrap: balance; }
+.d-head .where { font-size: 13px; color: var(--ink-2); }
+.d-head .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.d-body { overflow-y: auto; padding: 14px 16px 18px; display: grid; gap: 16px; align-content: start; }
+.alerts-box { display: grid; gap: 6px; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--alert) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--alert) 35%, var(--line)); }
+.alerts-box div { font-size: 13px; }
+.alerts-box small { color: var(--ink-3); font-family: var(--font-data); font-size: 11px; }
+.figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.fig { background: var(--panel-2); border-radius: 8px; padding: 9px 10px; display: grid; gap: 2px; }
+.fig span { font-size: 10.5px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+.fig b { font-family: var(--font-data); font-weight: 500; font-size: 15px; font-variant-numeric: tabular-nums; }
+.meter { display: grid; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.meter .bar { height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; background: var(--fill, var(--pin)); }
+.sec h3 { margin: 0 0 6px; font-family: var(--font-head); font-weight: 600; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.kv { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 5px 10px; font-size: 13px; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--font-data); font-size: 12.5px; }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.timeline li { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: start; font-size: 13px; padding: 4px 0; }
+.timeline li::before { content: ""; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--line); justify-self: center; }
+.timeline li:first-child::before { background: var(--pin); }
+.timeline time { font-family: var(--font-data); font-size: 11.5px; color: var(--ink-3); }
+.links { display: flex; flex-wrap: wrap; gap: 8px; }
+.links a, .copy { display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); text-decoration: none; font-size: 12.5px; cursor: pointer; }
+.links a:hover, .copy:hover { border-color: var(--pin); }
+.copy { padding: 2px 7px; font-size: 11px; margin-left: 6px; vertical-align: 1px; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 12px; }
+details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 0 0; }
+.note { font-size: 12px; color: var(--ink-3); }
+
+.sample-banner { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 800; background: rgba(18,26,35,.92); border: 1px solid var(--pin-possible); color: var(--ink); padding: 6px 12px; border-radius: 6px; font-size: 12px; white-space: nowrap; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
+.sample-banner b { color: var(--pin-possible); font-family: var(--font-head); letter-spacing: .05em; text-transform: uppercase; margin-right: 6px; }
+.toast { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 950; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--alert); padding: 10px 14px; border-radius: 8px; font-size: 13px; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-width: calc(100% - 32px); }
+
+@media (max-width: 760px) {
+  .brand .sub, .stats .stat:nth-child(3) { display: none; }
+  .stats { margin-left: 0; gap: 14px; }
+  .panel-btn { display: inline-flex; margin-left: auto; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); font-size: 12px; cursor: pointer; }
+  .body { grid-template-columns: 1fr; }
+  .side { position: absolute; inset: auto 0 0 0; height: 58%; z-index: 850; border-right: 0; border-top: 1px solid var(--line); border-radius: 12px 12px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.5); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .side.collapsed { display: none; }
+  .detail { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-width: none; height: 72%; }
+  .sample-banner { top: 8px; font-size: 11px; }
+}
+</style>
+
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><h1>NJ Distress Map</h1><span class="sub">Commercial properties on county sheriff sale lists</span></div>
+    <div class="stats" id="stats"></div>
+    <div class="layer-toggle" role="group" aria-label="Map style">
+      <button id="lyr-sat" aria-pressed="true">Satellite</button>
+      <button id="lyr-street" aria-pressed="false">Streets</button>
+    </div>
+    <button class="panel-btn" id="panel-btn" aria-controls="side">List</button>
+  </header>
+  <div class="body">
+    <aside class="side" id="side">
+      <div class="filters">
+        <input class="search" id="q" type="search" placeholder="Search address, owner, lender, docket" aria-label="Search">
+        <div class="chips" id="type-chips"></div>
+        <div class="row">
+          <select id="county" aria-label="County"><option value="">All counties</option></select>
+          <select id="window" aria-label="Sale date">
+            <option value="">Any sale date</option>
+            <option value="30">Sale in next 30 days</option>
+            <option value="90">Sale in next 90 days</option>
+          </select>
+        </div>
+        <div class="row"><label class="check"><input type="checkbox" id="show-closed"> Show properties off the sale list</label></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-alerts" aria-selected="true">Alerts<span class="count" id="n-alerts"></span></button>
+        <button role="tab" id="tab-props" aria-selected="false">Properties<span class="count" id="n-props"></span></button>
+      </div>
+      <div class="list" id="list" role="tabpanel"></div>
+      <div class="foot" id="foot"></div>
+    </aside>
+    <div id="map" aria-label="Satellite map of New Jersey"></div>
+    <section class="detail" id="detail" hidden aria-live="polite"></section>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script id="sample-data" type="application/json">{"sample":true,"generated_at":"2026-11-14T11:47:00+00:00","last_run":{"at":"2026-11-14T11:47:00+00:00","baseline":false,"county_errors":{},"counties":{"Atlantic":72,"Bergen":113,"Burlington":90,"Camden":171,"Cape May":33,"Cumberland":62,"Essex":167,"Gloucester":162,"Hudson":71,"Hunterdon":29,"Middlesex":201,"Monmouth":95,"Morris":96,"Passaic":107,"Salem":23,"Union":89}},"properties":[{"property_id":"9000000101","category":"target","category_reason":"Tax class 4B (Industrial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Bergen","muni":"Carlstadt Boro","street":"400 Sample Industrial Rd","city":"CARLSTADT","zip":"","block":"124","lot":"7","qual":"","pams_pin":"SAMPLE-9000000101","prop_class":"4B","class_label":"Industrial","net_value":14850000,"land_val":null,"imprvt_val":null,"last_yr_tax":356400,"bldg_desc":"1S-WAREHOUSE 148,000 SF","land_desc":"9.6 AC","calc_acre":9.6,"yr_constr":1979,"last_sale_price":10250000,"last_sale_date":"2017-09-08","sale_date":"2026-12-17","latest_status":"Adjourned - Defendant","sheriff_number":"26000101","court_case":"F-000101-25","plaintiff":"Sample Commercial Mortgage Trust 2019-C5","defendant":"Sample Logistics Park LLC; State of New Jersey","judgment":11640000,"upset":12300000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0101","description":"BLOCK 124 LOT 7","lat":40.8302,"lon":-74.0808,"geo_source":"parcel","status_history":[["Scheduled","2026-11-12"],["Adjourned - Defendant","2026-12-17"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000102","category":"target","category_reason":"Tax class 4C (Apartment (5+ units))","is_open":1,"closed_at":null,"first_seen":"2026-11-14T11:47:00+00:00","county":"Hudson","muni":"West New York Town","street":"6100 Sample Blvd East","city":"WEST NEW YORK","zip":"","block":"77","lot":"3","qual":"","pams_pin":"SAMPLE-9000000102","prop_class":"4C","class_label":"Apartment (5+ units)","net_value":9100000,"land_val":null,"imprvt_val":null,"last_yr_tax":218400,"bldg_desc":"6S-B-APT 48 UNITS","land_desc":"0.71 AC","calc_acre":0.71,"yr_constr":1931,"last_sale_price":8400000,"last_sale_date":"2021-04-15","sale_date":"2027-01-21","latest_status":"Scheduled","sheriff_number":"26000102","court_case":"F-000102-25","plaintiff":"Sample Regional Bank","defendant":"Sample Boulevard Associates, L.P.","judgment":6920000,"upset":7400000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0102","description":"BLOCK 77 LOT 3","lat":40.7859,"lon":-74.0072,"geo_source":"parcel","status_history":[["Scheduled","2027-01-21"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000103","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Hudson","muni":"Jersey City","street":"455 Sample Ave","city":"JERSEY CITY","zip":"","block":"1501","lot":"22","qual":"","pams_pin":"SAMPLE-9000000103","prop_class":"4A","class_label":"Commercial","net_value":5200000,"land_val":null,"imprvt_val":null,"last_yr_tax":124800,"bldg_desc":"1S-B-RETAIL","land_desc":"0.84 AC","calc_acre":0.84,"yr_constr":1962,"last_sale_price":2900000,"last_sale_date":"2015-06-11","sale_date":"2027-01-07","latest_status":"Adjourned - Plaintiff","sheriff_number":"26000103","court_case":"F-000103-25","plaintiff":"Valley Sample Bank","defendant":"Tonnelle Sample Holdings LLC; John Doe","judgment":3850000,"upset":4250000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0103","description":"BLOCK 1501 LOT 22","lat":40.7445,"lon":-74.061,"geo_source":"parcel","status_history":[["Scheduled","2026-12-10"],["Adjourned - Plaintiff","2027-01-07"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000104","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Essex","muni":"Newark City","street":"210 Sample Ferry St","city":"NEWARK","zip":"","block":"2010","lot":"14","qual":"","pams_pin":"SAMPLE-9000000104","prop_class":"4A","class_label":"Commercial","net_value":3150000,"land_val":null,"imprvt_val":null,"last_yr_tax":75600,"bldg_desc":"2S-B-STORE/APT","land_desc":"0.22 AC","calc_acre":0.22,"yr_constr":1925,"last_sale_price":1800000,"last_sale_date":"2018-02-02","sale_date":"2026-12-03","latest_status":"Adjourned - Plaintiff","sheriff_number":"26000104","court_case":"F-000104-25","plaintiff":"Sample Business Capital LLC","defendant":"Ironbound Sample Retail LLC","judgment":2475000,"upset":2610000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0104","description":"BLOCK 2010 LOT 14","lat":40.7268,"lon":-74.15,"geo_source":"parcel","status_history":[["Scheduled","2026-10-01"],["Adjourned - Sheriff","2026-11-05"],["Adjourned - Plaintiff","2026-12-03"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000105","category":"target","category_reason":"Tax class 4B (Industrial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Passaic","muni":"Paterson City","street":"88 Sample Mill St","city":"PATERSON","zip":"","block":"4402","lot":"9","qual":"","pams_pin":"SAMPLE-9000000105","prop_class":"4B","class_label":"Industrial","net_value":2280000,"land_val":null,"imprvt_val":null,"last_yr_tax":54720,"bldg_desc":"3S-B-MFG LOFT","land_desc":"1.1 AC","calc_acre":1.1,"yr_constr":1890,"last_sale_price":950000,"last_sale_date":"2012-07-30","sale_date":"2026-11-20","latest_status":"Scheduled","sheriff_number":"26000105","court_case":"F-000105-25","plaintiff":"Sample Industrial Lending Fund I","defendant":"Great Falls Sample Works Inc.","judgment":1810000,"upset":1940000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0105","description":"BLOCK 4402 LOT 9","lat":40.9165,"lon":-74.181,"geo_source":"parcel","status_history":[["Scheduled","2026-11-20"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000106","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Middlesex","muni":"Edison Twp","street":"1800 Sample Route 1","city":"EDISON","zip":"","block":"643","lot":"18.01","qual":"","pams_pin":"SAMPLE-9000000106","prop_class":"4A","class_label":"Commercial","net_value":11200000,"land_val":null,"imprvt_val":null,"last_yr_tax":268800,"bldg_desc":"1S-STRIP CENTER 62,000 SF","land_desc":"6.2 AC","calc_acre":6.2,"yr_constr":1987,"last_sale_price":12900000,"last_sale_date":"2016-11-18","sale_date":"2027-02-04","latest_status":"Bankruptcy Hold","sheriff_number":"26000106","court_case":"F-000106-25","plaintiff":"Sample Realty Debt Trust","defendant":"Route 1 Sample Plaza Associates, L.P.","judgment":8412550,"upset":9100000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0106","description":"BLOCK 643 LOT 18.01","lat":40.5402,"lon":-74.3478,"geo_source":"parcel","status_history":[["Scheduled","2026-11-06"],["Bankruptcy Hold","2026-11-13"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000107","category":"target","category_reason":"Tax class 1 (Vacant land)","is_open":1,"closed_at":null,"first_seen":"2026-11-13T11:45:00+00:00","county":"Monmouth","muni":"Asbury Park City","street":"500 Sample Ocean Ave","city":"ASBURY PARK","zip":"","block":"3803","lot":"1","qual":"","pams_pin":"SAMPLE-9000000107","prop_class":"1","class_label":"Vacant land","net_value":4600000,"land_val":null,"imprvt_val":null,"last_yr_tax":110400,"bldg_desc":"","land_desc":"1.9 AC","calc_acre":1.9,"yr_constr":null,"last_sale_price":5100000,"last_sale_date":"2022-03-09","sale_date":"2026-12-10","latest_status":"Scheduled","sheriff_number":"26000107","court_case":"F-000107-25","plaintiff":"Sample Construction Lender LLC","defendant":"Shore Sample Development LLC","judgment":3720000,"upset":3900000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0107","description":"BLOCK 3803 LOT 1","lat":40.2196,"lon":-74.0004,"geo_source":"parcel","status_history":[["Scheduled","2026-12-10"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000108","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Morris","muni":"Morristown Town","street":"40 Sample Park Pl","city":"MORRISTOWN","zip":"","block":"5801","lot":"4","qual":"","pams_pin":"SAMPLE-9000000108","prop_class":"4A","class_label":"Commercial","net_value":6300000,"land_val":null,"imprvt_val":null,"last_yr_tax":151200,"bldg_desc":"4S-B-OFFICE 38,000 SF","land_desc":"0.9 AC","calc_acre":0.9,"yr_constr":1972,"last_sale_price":7600000,"last_sale_date":"2014-05-21","sale_date":"2027-01-14","latest_status":"Scheduled","sheriff_number":"26000108","court_case":"F-000108-25","plaintiff":"Sample Insurance Co. of America","defendant":"Park Place Sample Office LLC","judgment":4980000,"upset":5050000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0108","description":"BLOCK 5801 LOT 4","lat":40.7975,"lon":-74.479,"geo_source":"parcel","status_history":[["Scheduled","2027-01-14"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000109","category":"target","category_reason":"Tax class 4B (Industrial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Camden","muni":"Camden City","street":"1200 Sample Admiral Wilson Blvd","city":"CAMDEN","zip":"","block":"1101","lot":"2","qual":"","pams_pin":"SAMPLE-9000000109","prop_class":"4B","class_label":"Industrial","net_value":1730000,"land_val":null,"imprvt_val":null,"last_yr_tax":41520,"bldg_desc":"1S-WHSE 41,000 SF","land_desc":"3.4 AC","calc_acre":3.4,"yr_constr":1968,"last_sale_price":1200000,"last_sale_date":"2010-08-12","sale_date":"2026-12-18","latest_status":"Scheduled","sheriff_number":"26000109","court_case":"F-000109-25","plaintiff":"Sample Bank, N.A.","defendant":"Admiral Sample Distribution LLC","judgment":1390000,"upset":1410000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0109","description":"BLOCK 1101 LOT 2","lat":39.9346,"lon":-75.0989,"geo_source":"parcel","status_history":[["Scheduled","2026-12-18"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000110","category":"target","category_reason":"Tax class 4C (Apartment (5+ units))","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Union","muni":"Elizabeth City","street":"700 Sample North Ave","city":"ELIZABETH","zip":"","block":"12","lot":"1201","qual":"","pams_pin":"SAMPLE-9000000110","prop_class":"4C","class_label":"Apartment (5+ units)","net_value":4400000,"land_val":null,"imprvt_val":null,"last_yr_tax":105600,"bldg_desc":"4S-B-APT 32 UNITS","land_desc":"0.5 AC","calc_acre":0.5,"yr_constr":1958,"last_sale_price":3900000,"last_sale_date":"2019-10-03","sale_date":"2026-12-08","latest_status":"Adjourned - Plaintiff","sheriff_number":"26000110","court_case":"F-000110-25","plaintiff":"Sample Multifamily Finance LLC","defendant":"North Ave Sample Apartments LLC","judgment":3420000,"upset":3600000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0110","description":"BLOCK 12 LOT 1201","lat":40.6681,"lon":-74.2045,"geo_source":"parcel","status_history":[["Scheduled","2026-11-10"],["Adjourned - Plaintiff","2026-12-08"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000111","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Atlantic","muni":"Atlantic City","street":"2400 Sample Pacific Ave","city":"ATLANTIC CITY","zip":"","block":"118","lot":"5","qual":"","pams_pin":"SAMPLE-9000000111","prop_class":"4A","class_label":"Commercial","net_value":2900000,"land_val":null,"imprvt_val":null,"last_yr_tax":69600,"bldg_desc":"5S-B-MOTEL 60 RMS","land_desc":"0.6 AC","calc_acre":0.6,"yr_constr":1964,"last_sale_price":2600000,"last_sale_date":"2017-01-19","sale_date":"2026-12-11","latest_status":"Scheduled","sheriff_number":"26000111","court_case":"F-000111-25","plaintiff":"Sample Hospitality Lender LLC","defendant":"Pacific Sample Hotel Group LLC","judgment":2210000,"upset":2300000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0111","description":"BLOCK 118 LOT 5","lat":39.357,"lon":-74.438,"geo_source":"parcel","status_history":[["Scheduled","2026-12-11"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000112","category":"possible","category_reason":"No tax-record match; owner is a business entity","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Hudson","muni":"","street":"88 Sample Harbor Dr","city":"BAYONNE","zip":"","block":"","lot":"","qual":"","pams_pin":null,"prop_class":null,"class_label":null,"net_value":null,"land_val":null,"imprvt_val":null,"last_yr_tax":null,"bldg_desc":"","land_desc":"","calc_acre":null,"yr_constr":null,"last_sale_price":null,"last_sale_date":null,"sale_date":"2026-12-10","latest_status":"Scheduled","sheriff_number":"26000112","court_case":"F-000112-25","plaintiff":"Acme Sample Lending, LLC","defendant":"Harbor Drive Sample Partners, LLC","judgment":null,"upset":1200000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0112","description":"","lat":40.6688,"lon":-74.1137,"geo_source":"address","status_history":[["Scheduled","2026-12-10"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000113","category":"possible","category_reason":"No tax-record match; owner is a business entity","is_open":1,"closed_at":null,"first_seen":"2026-11-01T11:45:00+00:00","county":"Bergen","muni":"","street":"15 Sample Commerce Way","city":"HACKENSACK","zip":"","block":"","lot":"","qual":"","pams_pin":null,"prop_class":null,"class_label":null,"net_value":null,"land_val":null,"imprvt_val":null,"last_yr_tax":null,"bldg_desc":"","land_desc":"","calc_acre":null,"yr_constr":null,"last_sale_price":null,"last_sale_date":null,"sale_date":"2027-01-08","latest_status":"Scheduled","sheriff_number":"26000113","court_case":"F-000113-25","plaintiff":"Sample Community Bank","defendant":"Commerce Way Sample Realty Corp.","judgment":2410000,"upset":2650000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0113","description":"","lat":null,"lon":null,"geo_source":null,"status_history":[["Scheduled","2027-01-08"]],"detail_url":"https://salesweb.civilview.com/"},{"property_id":"9000000114","category":"target","category_reason":"Tax class 4A (Commercial)","is_open":0,"closed_at":"2026-11-14T11:47:00+00:00","first_seen":"2026-11-01T11:45:00+00:00","county":"Essex","muni":"Newark City","street":"95 Sample Market St","city":"NEWARK","zip":"","block":"145","lot":"30","qual":"","pams_pin":"SAMPLE-9000000114","prop_class":"4A","class_label":"Commercial","net_value":2100000,"land_val":null,"imprvt_val":null,"last_yr_tax":50400,"bldg_desc":"3S-B-STORE/OFF","land_desc":"0.15 AC","calc_acre":0.15,"yr_constr":1915,"last_sale_price":1500000,"last_sale_date":"2016-04-01","sale_date":"2026-11-12","latest_status":"Cancelled","sheriff_number":"26000114","court_case":"F-000114-25","plaintiff":"Sample Capital Partners LP","defendant":"Market Street Sample LLC","judgment":1690000,"upset":1750000,"attorney":"Sample Foreclosure Counsel LLP","attorney_phone":"(973) 555-0114","description":"BLOCK 145 LOT 30","lat":40.735,"lon":-74.172,"geo_source":"parcel","status_history":[["Scheduled","2026-10-15"],["Adjourned - Plaintiff","2026-11-12"],["Cancelled","2026-11-12"]],"detail_url":"https://salesweb.civilview.com/"}],"alerts":[{"id":14,"property_id":"9000000102","ts":"2026-11-14T11:47:00+00:00","kind":"new","old_value":null,"new_value":null},{"id":13,"property_id":"9000000103","ts":"2026-11-14T11:47:00+00:00","kind":"status","old_value":"Scheduled (2026-12-10)","new_value":"Adjourned - Plaintiff (2027-01-07)"},{"id":12,"property_id":"9000000103","ts":"2026-11-14T11:47:00+00:00","kind":"sale_date","old_value":"2026-12-10","new_value":"2027-01-07"},{"id":11,"property_id":"9000000103","ts":"2026-11-14T11:47:00+00:00","kind":"upset","old_value":"4100000","new_value":"4250000"},{"id":10,"property_id":"9000000106","ts":"2026-11-14T11:47:00+00:00","kind":"status","old_value":"Scheduled (2026-11-06)","new_value":"Bankruptcy Hold (2026-11-13)"},{"id":9,"property_id":"9000000114","ts":"2026-11-14T11:47:00+00:00","kind":"closed","old_value":"Adjourned - Plaintiff","new_value":"Cancelled"},{"id":8,"property_id":"9000000107","ts":"2026-11-13T11:45:00+00:00","kind":"new","old_value":null,"new_value":null},{"id":7,"property_id":"9000000112","ts":"2026-11-13T11:45:00+00:00","kind":"new","old_value":null,"new_value":null},{"id":6,"property_id":"9000000101","ts":"2026-11-11T11:45:00+00:00","kind":"status","old_value":"Scheduled (2026-11-12)","new_value":"Adjourned - Defendant (2026-12-17)"},{"id":5,"property_id":"9000000110","ts":"2026-11-11T11:45:00+00:00","kind":"status","old_value":"Scheduled (2026-11-10)","new_value":"Adjourned - Plaintiff (2026-12-08)"},{"id":4,"property_id":"9000000104","ts":"2026-11-08T11:45:00+00:00","kind":"status","old_value":"Adjourned - Sheriff (2026-11-05)","new_value":"Adjourned - Plaintiff (2026-12-03)"}]}</script>
+<script>
+(() => {
+  const PARCELS = "https://services2.arcgis.com/XVOqAjTOJ5P6ngMu/ArcGIS/rest/services/Parcels_Composite_NJ_WM/FeatureServer/0/query";
+  const TYPES = [
+    { key: "4A", label: "Commercial", c: "var(--pin)" },
+    { key: "4B", label: "Industrial", c: "var(--pin)" },
+    { key: "4C", label: "Apartments", c: "var(--pin)" },
+    { key: "1", label: "Land", c: "var(--pin)" },
+    { key: "possible", label: "Needs review", c: "var(--pin-possible)" },
+  ];
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  const money = (v) => (v == null || v === "" ? "—" : "$" + Math.round(+v).toLocaleString("en-US"));
+  const short$ = (v) => {
+    if (v == null) return "—";
+    v = +v;
+    return v >= 1e6 ? "$" + (v / 1e6).toFixed(v >= 1e7 ? 1 : 2) + "M" : v >= 1e3 ? "$" + Math.round(v / 1e3) + "K" : "$" + v;
+  };
+  const parseDay = (s) => (s ? new Date(String(s).slice(0, 10) + "T12:00:00") : null);
+  const fmtDate = (s) => { const d = parseDay(s); return d && !isNaN(d) ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"; };
+  const isoToNice = (t) => String(t ?? "").replace(/\d{4}-\d{2}-\d{2}/g, (m) => fmtDate(m));
+  const titleCase = (s) => String(s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Llc|Lp|Llp|Pllc|Pc|Inc|Na|Nj|Us|Usa)\b/g, (m) => m.toUpperCase());
+
+  let DATA, NOW, LAST_VISIT, map, layers, markers = new Map(), selected = null, outline = null, tab = "alerts";
+  const state = { q: "", county: "", window: "", closed: false, types: new Set(TYPES.map((t) => t.key)) };
+
+  function alertLabel(a) {
+    const v = (a.new_value || "").toLowerCase();
+    if (a.kind === "new") return "New listing";
+    if (a.kind === "sale_date") return "New sale date";
+    if (a.kind === "upset") return "Upset changed";
+    if (a.kind === "judgment") return "Judgment changed";
+    if (a.kind === "closed") return /sold|purchas/.test(v) ? "Sold" : /cancel/.test(v) ? "Cancelled" : /withdr|vacat|dismiss/.test(v) ? "Withdrawn" : "Off the list";
+    if (/bankrupt/.test(v)) return "Bankruptcy hold";
+    if (/adjourn/.test(v)) return "Adjourned";
+    if (/sold|purchas/.test(v)) return "Sold";
+    if (/cancel/.test(v)) return "Cancelled";
+    return "Status change";
+  }
+  function alertText(a) {
+    const nice = (x) => (a.kind === "upset" || a.kind === "judgment" ? money(x) : a.kind === "sale_date" ? fmtDate(x) : isoToNice(x));
+    if (a.kind === "new") return "Added to the sheriff sale list";
+    if (a.kind === "closed") return "Final status: " + isoToNice(a.new_value);
+    return (a.old_value ? nice(a.old_value) + " → " : "") + nice(a.new_value);
+  }
+  const ago = (ts) => {
+    const days = Math.floor((NOW - new Date(ts)) / 864e5);
+    return days <= 0 ? "Today" : days === 1 ? "Yesterday" : days + "d ago";
+  };
+  const typeKey = (p) => (p.category === "possible" ? "possible" : p.prop_class || "possible");
+  const firstDefendant = (d) => String(d || "").split(/;|\bET\.?\s*ALS?\b|\bA\/K\/A\b/i)[0].trim();
+
+  function visible(p) {
+    if (!state.closed && !p.is_open) return false;
+    if (!state.types.has(typeKey(p))) return false;
+    if (state.county && p.county !== state.county) return false;
+    if (state.window) {
+      const d = parseDay(p.sale_date);
+      if (!d || d < NOW - 864e5 || d > +NOW + state.window * 864e5) return false;
+    }
+    if (state.q) {
+      const hay = [p.street, p.city, p.muni, p.county, p.defendant, p.plaintiff, p.court_case, p.sheriff_number, p.block && "block " + p.block].join(" ").toLowerCase();
+      if (!state.q.split(/\s+/).every((w) => hay.includes(w))) return false;
+    }
+    return true;
+  }
+
+  function recentAlerts() {
+    const cutoff = +NOW - 7 * 864e5;
+    return DATA.alerts.filter((a) => +new Date(a.ts) >= cutoff);
+  }
+
+  // ---------------------------------------------------------------- map
+  function initMap() {
+    map = L.map("map", { zoomControl: true, preferCanvas: false, maxZoom: 20 }).setView([40.25, -74.55], 8);
+    const sat = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      maxNativeZoom: 19, maxZoom: 20, attribution: "Imagery © Esri, Maxar, Earthstar Geographics",
+    });
+    const roads = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 19, maxZoom: 20, opacity: 0.85 });
+    const labels = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom: 19, maxZoom: 20 });
+    const street = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap contributors © CARTO",
+    });
+    layers = { satellite: L.layerGroup([sat, roads, labels]), streets: street };
+    layers.satellite.addTo(map);
+    const flags = () => document.getElementById("map").classList.toggle("show-flags", map.getZoom() >= 11);
+    map.on("zoomend", flags); flags();
+    const setLayer = (name) => {
+      Object.entries(layers).forEach(([k, l]) => (k === name ? l.addTo(map) : map.removeLayer(l)));
+      $("#lyr-sat").setAttribute("aria-pressed", name === "satellite");
+      $("#lyr-street").setAttribute("aria-pressed", name === "streets");
+      store.set("njdm:layer", name);
+    };
+    $("#lyr-sat").onclick = () => setLayer("satellite");
+    $("#lyr-street").onclick = () => setLayer("streets");
+    if (store.get("njdm:layer") === "streets") setLayer("streets");
+  }
+
+  function pinIcon(p, alert) {
+    const cls = ["pin", p.is_open ? p.category : "closed", alert ? "alert" : "", selected === p.property_id ? "selected" : ""].join(" ");
+    const flag = alert ? `<span class="flag">${esc(alertLabel(alert))}</span>` : "";
+    return L.divIcon({ className: "", html: `<span class="${cls}"><i></i>${flag}</span>`, iconSize: [16, 16], iconAnchor: [8, 8] });
+  }
+
+  function drawMarkers() {
+    const latest = new Map();
+    recentAlerts().forEach((a) => { if (!latest.has(a.property_id)) latest.set(a.property_id, a); });
+    markers.forEach((m) => m.remove());
+    markers.clear();
+    DATA.properties.forEach((p) => {
+      if (p.lat == null || p.lon == null || !visible(p)) return;
+      const a = latest.get(p.property_id);
+      const m = L.marker([p.lat, p.lon], { icon: pinIcon(p, a), zIndexOffset: a ? 1000 : 0, keyboard: true, title: p.street || "" })
+        .on("click", () => select(p.property_id, false))
+        .addTo(map);
+      m._prop = p; m._alert = a;
+      markers.set(p.property_id, m);
+    });
+  }
+
+  // ---------------------------------------------------------------- sidebar
+  function renderStats() {
+    const open = DATA.properties.filter((p) => p.is_open);
+    const newWeek = recentAlerts().filter((a) => a.kind === "new").length;
+    const soon = open.filter((p) => { const d = parseDay(p.sale_date); return d && d >= NOW - 864e5 && d <= +NOW + 30 * 864e5; }).length;
+    const debt = open.reduce((s, p) => s + (+(p.upset || p.judgment || 0)), 0);
+    $("#stats").innerHTML = `
+      <div class="stat"><b>${open.length}</b><span>On sale lists</span></div>
+      <div class="stat hot"><b>${newWeek}</b><span>New this week</span></div>
+      <div class="stat"><b>${soon}</b><span>Sales in 30 days</span></div>
+      <div class="stat"><b>${short$(debt)}</b><span>Upset total</span></div>`;
+  }
+
+  function renderFilters() {
+    $("#type-chips").innerHTML = TYPES.map((t) =>
+      `<button class="chip" data-type="${t.key}" aria-pressed="${state.types.has(t.key)}" style="--c:${t.c}"><i></i>${t.label}</button>`).join("");
+    $("#type-chips").querySelectorAll(".chip").forEach((b) => b.onclick = () => {
+      const k = b.dataset.type;
+      state.types.has(k) ? state.types.delete(k) : state.types.add(k);
+      b.setAttribute("aria-pressed", state.types.has(k));
+      refresh();
+    });
+    const counties = [...new Set(DATA.properties.map((p) => p.county).filter(Boolean))].sort();
+    $("#county").insertAdjacentHTML("beforeend", counties.map((c) => `<option>${esc(c)}</option>`).join(""));
+    $("#county").onchange = (e) => { state.county = e.target.value; refresh(); };
+    $("#window").onchange = (e) => { state.window = +e.target.value || ""; refresh(); };
+    $("#show-closed").onchange = (e) => { state.closed = e.target.checked; refresh(); };
+    let t; $("#q").oninput = (e) => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); refresh(); }, 120); };
+    const setTab = (name) => {
+      tab = name;
+      $("#tab-alerts").setAttribute("aria-selected", name === "alerts");
+      $("#tab-props").setAttribute("aria-selected", name === "props");
+      renderList();
+    };
+    $("#tab-alerts").onclick = () => setTab("alerts");
+    $("#tab-props").onclick = () => setTab("props");
+    $("#panel-btn").onclick = () => $("#side").classList.toggle("collapsed");
+  }
+
+  function placeLine(p) {
+    return [p.muni || titleCase(p.city), p.county ? p.county + " Co." : ""].filter(Boolean).join(" · ");
+  }
+
+  function renderList() {
+    const byId = new Map(DATA.properties.map((p) => [p.property_id, p]));
+    const alerts = recentAlerts().filter((a) => byId.has(a.property_id) && visible(byId.get(a.property_id)));
+    const props = DATA.properties.filter(visible).sort((a, b) => String(a.sale_date || "9").localeCompare(String(b.sale_date || "9")));
+    $("#n-alerts").textContent = alerts.length;
+    $("#n-props").textContent = props.length;
+    const list = $("#list");
+    if (tab === "alerts") {
+      list.innerHTML = alerts.length ? alerts.map((a) => {
+        const p = byId.get(a.property_id);
+        const unseen = LAST_VISIT && a.ts > LAST_VISIT;
+        const t = a.kind === "closed" ? "var(--pin-closed)" : a.kind === "new" ? "var(--alert)" : "var(--pin-possible)";
+        return `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
+          <div class="top">${unseen ? '<span class="unseen" title="New since your last visit"></span>' : ""}<span class="tag" style="--t:${t}">${esc(alertLabel(a))}</span><span class="when">${ago(a.ts)}</span></div>
+          <div class="addr">${esc(titleCase(p.street))}</div>
+          <div class="meta">${esc(placeLine(p))}${p.class_label ? " · " + esc(p.class_label) : ""}</div>
+          <div class="change">${esc(alertText(a))}</div>
+        </button>`;
+      }).join("") : `<div class="empty">No alerts in the last 7 days for the current filters. New listings, adjournments, sale-date and upset changes appear here and pulse on the map.</div>`;
+    } else {
+      list.innerHTML = props.length ? props.map((p) => `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
+          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(p.sale_date)}</span></div>
+          <div class="meta">${esc(placeLine(p))} · ${esc(p.class_label || "Needs review")}${p.is_open ? "" : " · Off list"}</div>
+          <div class="meta">Upset ${short$(p.upset)}${p.net_value ? " · Assessed " + short$(p.net_value) : ""}${p.lat == null ? " · No map location" : ""}</div>
+        </button>`).join("") : `<div class="empty">No properties match these filters.</div>`;
+    }
+    list.querySelectorAll(".item").forEach((b) => b.onclick = () => select(b.dataset.id, true));
+  }
+
+  function renderFoot() {
+    const r = DATA.last_run;
+    if (!r) { $("#foot").textContent = "Waiting for the first scan."; return; }
+    const n = Object.keys(r.counties || {}).length;
+    const errs = Object.keys(r.county_errors || {});
+    $("#foot").innerHTML = `Last scan ${new Date(r.at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · ${n} counties` +
+      (errs.length ? `<br><span class="err">Could not read: ${esc(errs.join(", "))}</span>` : "") +
+      `<br>Sources: county sheriff listings (CivilView), NJ MOD-IV tax data (NJOGIS). Verify before relying on figures.`;
+  }
+
+  // ---------------------------------------------------------------- property file
+  function copyBtn(text) { return `<button class="copy" data-copy="${esc(text)}" aria-label="Copy ${esc(text)}">Copy</button>`; }
+
+  function renderDetail(p) {
+    const hist = (p.status_history || []).slice().reverse();
+    const alerts = DATA.alerts.filter((a) => a.property_id === p.property_id).slice(0, 4);
+    const debt = +(p.upset || p.judgment || 0);
+    const ratio = debt && p.net_value ? Math.round((100 * debt) / p.net_value) : null;
+    const days = p.sale_date ? Math.round((parseDay(p.sale_date) - NOW) / 864e5) : null;
+    const when = days == null ? "" : days > 1 ? ` · in ${days} days` : days === 1 ? " · tomorrow" : days === 0 ? " · today" : "";
+    const owner = firstDefendant(p.defendant);
+    const others = String(p.defendant || "").slice(owner.length).replace(/^[;,\s]+/, "");
+    const bl = p.block ? `Block ${p.block} · Lot ${p.lot}${p.qual ? " · " + p.qual : ""}` : "";
+    const ll = p.lat != null ? `${p.lat},${p.lon}` : encodeURIComponent(`${p.street}, ${p.city}, NJ`);
+    const catTag = p.category === "possible" ? `<span class="tag" style="--t:var(--pin-possible)">Needs review</span>` : `<span class="tag" style="--t:var(--pin)">${esc(p.class_label)}${p.prop_class ? " · " + esc(p.prop_class) : ""}</span>`;
+    $("#detail").innerHTML = `
+      <div class="d-head">
+        <button class="x" id="d-close" aria-label="Close">×</button>
+        <h2>${esc(titleCase(p.street) || "Address not listed")}</h2>
+        <div class="where">${esc(placeLine(p))}${bl ? " · <span class='mono'>" + esc(bl) + "</span>" : ""}</div>
+        <div class="tags">${catTag}${p.is_open ? "" : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
+      </div>
+      <div class="d-body">
+        ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
+        <div class="figs">
+          <div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>
+          <div class="fig"><span>Judgment</span><b>${short$(p.judgment)}</b></div>
+          <div class="fig"><span>Assessed</span><b>${short$(p.net_value)}</b></div>
+        </div>
+        ${ratio != null ? `<div class="meter"><div>Debt is <b>${ratio}%</b> of assessed value</div><div class="bar"><i style="width:${Math.min(ratio, 100)}%;--fill:${ratio >= 90 ? "var(--alert)" : ratio >= 70 ? "var(--pin-possible)" : "var(--ok)"}"></i></div></div>` : ""}
+        <div class="sec"><h3>Sheriff sale</h3><dl class="kv">
+          <dt>Sale date</dt><dd>${fmtDate(p.sale_date)}${when}</dd>
+          <dt>Status</dt><dd>${esc(p.latest_status || "—")}</dd>
+          <dt>Docket</dt><dd><span class="mono">${esc(p.court_case || "—")}</span>${p.court_case ? copyBtn(p.court_case) : ""}</dd>
+          <dt>Sheriff #</dt><dd class="mono">${esc(p.sheriff_number || "—")}</dd>
+        </dl></div>
+        <div class="sec"><h3>Parties</h3><dl class="kv">
+          <dt>Owner</dt><dd><b>${esc(titleCase(owner) || "—")}</b>${others ? `<div class="note">Also named: ${esc(titleCase(others))}</div>` : ""}</dd>
+          <dt>Lender</dt><dd>${esc(titleCase(p.plaintiff) || "—")}</dd>
+          <dt>Attorney</dt><dd>${esc(titleCase(p.attorney) || "—")}${p.attorney_phone ? `<div class="mono">${esc(p.attorney_phone)}${copyBtn(p.attorney_phone)}</div>` : ""}</dd>
+        </dl></div>
+        <div class="sec"><h3>Tax record</h3>${p.prop_class ? `<dl class="kv">
+          <dt>Class</dt><dd>${esc(p.prop_class)} · ${esc(p.class_label)}</dd>
+          ${p.bldg_desc ? `<dt>Building</dt><dd class="mono">${esc(p.bldg_desc)}</dd>` : ""}
+          ${p.calc_acre ? `<dt>Lot size</dt><dd>${(+p.calc_acre).toFixed(2)} acres</dd>` : ""}
+          ${p.yr_constr ? `<dt>Year built</dt><dd>${esc(p.yr_constr)}</dd>` : ""}
+          ${p.last_sale_price ? `<dt>Last sale</dt><dd>${money(p.last_sale_price)} · ${fmtDate(p.last_sale_date)}</dd>` : ""}
+          ${p.last_yr_tax ? `<dt>Annual taxes</dt><dd>${money(p.last_yr_tax)}</dd>` : ""}
+        </dl>` : `<p class="note">${esc(p.category_reason || "Not matched to a tax record.")}</p>`}</div>
+        <div class="sec"><h3>Status history</h3><ol class="timeline">${hist.map((h) => `<li><span>${esc(h[0])}</span><time>${fmtDate(h[1])}</time></li>`).join("") || "<li>None posted</li>"}</ol></div>
+        ${p.description ? `<details><summary>Legal description</summary><p>${esc(p.description)}</p></details>` : ""}
+        <div class="links">
+          <a href="${esc(p.detail_url)}" target="_blank" rel="noopener">Sheriff listing</a>
+          <a href="https://www.google.com/maps/search/?api=1&query=${ll}" target="_blank" rel="noopener">Google Maps</a>
+          ${p.lat != null ? `<a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lon}" target="_blank" rel="noopener">Street View</a>` : ""}
+        </div>
+        ${p.lat == null ? `<p class="note">No map location yet: the address couldn't be matched to a parcel or geocoded.</p>` : ""}
+      </div>`;
+    $("#d-close").onclick = closeDetail;
+    $("#detail").querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => {
+      const txt = b.dataset.copy;
+      Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { b.textContent = "Copied"; }, () => {
+        const r = document.createRange(); r.selectNodeContents(b.previousElementSibling || b); getSelection().removeAllRanges(); getSelection().addRange(r);
+      });
+    });
+  }
+
+  function select(id, fly) {
+    const p = DATA.properties.find((x) => x.property_id === id);
+    if (!p) return;
+    const prev = selected;
+    selected = id;
+    [prev, id].forEach((pid) => { const m = markers.get(pid); if (m) m.setIcon(pinIcon(m._prop, m._alert)); });
+    renderDetail(p);
+    $("#detail").hidden = false;
+    if (window.matchMedia("(max-width: 760px)").matches) $("#side").classList.add("collapsed");
+    renderList();
+    if (outline) { outline.remove(); outline = null; }
+    if (p.lat != null) {
+      const go = () => {
+        const z = Math.max(map.getZoom(), 17);
+        const pt = map.project([p.lat, p.lon], z);
+        const offset = window.matchMedia("(max-width: 760px)").matches ? L.point(0, map.getSize().y * 0.25) : L.point(190, 0);
+        const target = map.unproject(pt.add(offset), z);
+        fly ? map.flyTo(target, z, { duration: 1.2 }) : map.setView(target, z);
+      };
+      go();
+      drawParcel(p);
+    }
+  }
+
+  async function drawParcel(p) {
+    if (!p.pams_pin || DATA.sample) return;
+    const want = p.property_id;
+    try {
+      const url = PARCELS + "?" + new URLSearchParams({ where: `PAMS_PIN='${p.pams_pin.replace(/'/g, "''")}'`, outFields: "PAMS_PIN", returnGeometry: "true", outSR: "4326", f: "geojson" });
+      const gj = await (await fetch(url)).json();
+      if (selected !== want || !gj.features?.length) return;
+      if (outline) outline.remove();
+      outline = L.geoJSON(gj, { style: { color: "#ffe066", weight: 2.5, fillColor: "#ffe066", fillOpacity: 0.08, dashArray: "6 4" }, interactive: false }).addTo(map);
+    } catch { /* outline is a nice-to-have */ }
+  }
+
+  function closeDetail() {
+    const prev = selected;
+    selected = null;
+    $("#detail").hidden = true;
+    if (outline) { outline.remove(); outline = null; }
+    const m = markers.get(prev); if (m) m.setIcon(pinIcon(m._prop, m._alert));
+    renderList();
+  }
+
+  function refresh() { drawMarkers(); renderList(); }
+
+  function toast(msg) {
+    const t = document.createElement("div");
+    t.className = "toast"; t.innerHTML = msg;
+    $(".body").appendChild(t);
+    setTimeout(() => t.remove(), 6000);
+  }
+
+  async function load() {
+    try {
+      const r = await fetch("data/map.json", { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      return await r.json();
+    } catch {
+      const d = JSON.parse(document.getElementById("sample-data").textContent);
+      d.sample = true;
+      return d;
+    }
+  }
+
+  async function start() {
+    DATA = await load();
+    NOW = new Date(DATA.generated_at || Date.now());
+    DATA.alerts.sort((a, b) => (b.ts > a.ts ? 1 : b.ts < a.ts ? -1 : b.id - a.id));
+    LAST_VISIT = DATA.sample ? null : store.get("njdm:lastVisit");
+    initMap();
+    renderStats(); renderFilters(); renderFoot(); refresh();
+    const pts = DATA.properties.filter((p) => p.is_open && p.lat != null).map((p) => [p.lat, p.lon]);
+    if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 13 });
+    if (DATA.sample) {
+      $(".body").insertAdjacentHTML("beforeend", `<div class="sample-banner"><b>Sample data</b>The live map fills in after the first daily scan.</div>`);
+    } else {
+      const fresh = LAST_VISIT ? DATA.alerts.filter((a) => a.ts > LAST_VISIT).length : 0;
+      if (fresh) toast(`<b>${fresh} alert${fresh === 1 ? "" : "s"}</b> since your last visit`);
+      store.set("njdm:lastVisit", DATA.generated_at);
+    }
+    if (window.matchMedia("(max-width: 760px)").matches) $("#side").classList.add("collapsed");
+  }
+  start();
+})();
+</script>
+
+</body>
+</html>
