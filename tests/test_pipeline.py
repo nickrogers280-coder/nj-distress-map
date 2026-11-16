@@ -276,3 +276,32 @@ def test_multi_lot_notice_records_every_lot():
                                            "PROP_CLASS": "4A"}, "block/lot")
     pipeline._enrich(rec2, Q(), "Monmouth")
     assert json.loads(rec2["lots"]) == ["16"] and rec2["net_value_total"] is None
+
+
+def test_scripts_have_no_undefined_names():
+    """Catch NameErrors in the entry-point scripts, which the unit tests don't execute."""
+    import ast
+    import builtins
+    from pathlib import Path
+    root = Path(__file__).parent.parent
+    for script in ("run.py", "enrich_contacts.py"):
+        tree = ast.parse((root / script).read_text())
+        defined = set(dir(builtins))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                defined |= {(a.asname or a.name).split(".")[0] for a in node.names}
+            elif isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                defined.add(node.name)
+                defined |= {a.arg for a in node.args.args + node.args.kwonlyargs} if isinstance(node, ast.FunctionDef) else set()
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                defined.add(node.id)
+            elif isinstance(node, ast.arg):
+                defined.add(node.arg)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                defined.add(node.name)
+            elif isinstance(node, (ast.comprehension,)):
+                for n in ast.walk(node.target):
+                    if isinstance(n, ast.Name):
+                        defined.add(n.id)
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        assert not (used - defined - {"__file__", "__name__"}), (script, used - defined)
