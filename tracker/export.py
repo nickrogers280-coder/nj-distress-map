@@ -44,6 +44,10 @@ def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, cl
             ORDER BY sale_date""", (closed_cutoff, reo_cutoff)).fetchall()
     props = []
     ids = set()
+    try:
+        enriched = {r[0] for r in db.conn.execute("SELECT property_id FROM enrichment")}
+    except Exception:  # noqa: BLE001 - table not created yet
+        enriched = set()
     for r in rows:
         r = dict(r)
         p = {k: r.get(k) for k in PROPERTY_FIELDS}
@@ -57,6 +61,7 @@ def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, cl
                 p[k] = json.loads(r.get(k) or "null")
             except json.JSONDecodeError:
                 p[k] = None
+        p["enriched"] = r["property_id"] in enriched
         props.append(p)
         ids.add(r["property_id"])
 
@@ -84,6 +89,9 @@ def export_all(db: DB, out_dir: Path, reo_days: int = 365) -> None:
         w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         w.writeheader()
         w.writerows(db.open_leads())
+    from .enrich import export_contacts
+    contacts = export_contacts(db)
+    (out_dir / "contacts.json").write_text(json.dumps(contacts, separators=(",", ":"), default=str))
     reo = [dict(r) for r in db.conn.execute(
         "SELECT * FROM listings WHERE outcome='reo' AND category IN ('target','land') ORDER BY outcome_date DESC")]
     with open(out_dir / "reo.csv", "w", newline="") as f:
