@@ -48,6 +48,15 @@ jobs:
           CONTACT_EMAIL: ${{ secrets.CONTACT_EMAIL }}
         run: python run.py
 
+      - name: Enrich owner and lender contacts from county records
+        continue-on-error: true      # never let this hold back the map update
+        timeout-minutes: 90
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr > /dev/null
+          pip install -q playwright
+          python -m playwright install --with-deps chromium > /dev/null
+          python enrich_contacts.py --limit 25
+
       - name: Commit updated data
         if: always()
         run: |
@@ -75,6 +84,7 @@ jobs:
           cp site/index.html _site/index.html
           if [ -f data/map.json ]; then cp data/map.json _site/data/map.json; fi
           if [ -f data/leads.csv ]; then cp data/leads.csv _site/data/leads.csv; fi
+          if [ -f data/contacts.json ]; then cp data/contacts.json _site/data/contacts.json; fi
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
