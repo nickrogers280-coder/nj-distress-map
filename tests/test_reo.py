@@ -106,18 +106,18 @@ def test_reo_pass(tmp_path):
     s = pipeline.run_reo(CFG, cv, FakeParcels(), db, ts="2026-11-15T11:45:00+00:00")
     assert s["reo_found"] == 1 and s["reo_tracked"] == 1 and s["reo_baseline"] is True
     assert "S4" not in cv.calls                       # outside the look-back window
-    reo = db.get("S1")
+    reo = db.get("10:20060001")
     assert reo["outcome"] == "reo" and reo["outcome_date"] == "2026-09-10"
     assert reo["category"] == "target" and reo["is_open"] == 0 and reo["lat"] == 40.75
     assert db.get("S2") is None                       # third-party sales aren't stored as properties
-    assert db.sold_checked("S2")["outcome"] == "third_party"
+    assert db.sold_checked("10:@12 THIRD PARTY AVE")["outcome"] == "third_party"
     assert db.get_meta("reo_baseline_done") == "1"
 
     # The map shows the REO property; the baseline event is not shown as an alert.
     db.log_run("2026-11-15T11:45:00+00:00", "2026-11-15T12:00:00+00:00", s)
     from datetime import datetime, timezone
     m = build_map_data(db, now=datetime(2026, 11, 15, 12, tzinfo=timezone.utc))
-    p = next(x for x in m["properties"] if x["property_id"] == "S1")
+    p = next(x for x in m["properties"] if x["property_id"] == "10:20060001")
     assert p["outcome"] == "reo" and p["outcome_status"].startswith("Purchased at Auction by Plaintiff")
     assert m["alerts"] == []
 
@@ -130,7 +130,7 @@ def test_reo_pass(tmp_path):
     cv.details["S3"].description = "BLOCK 12 LOT 3"
     s3 = pipeline.run_reo(CFG, cv, FakeParcels(), db, ts="2026-11-23T11:45:00+00:00")
     assert cv.calls == ["S3"] and s3["reo_found"] == 1 and s3["reo_baseline"] is False
-    ev = db.conn.execute("SELECT kind, baseline FROM events WHERE property_id='S3'").fetchall()
+    ev = db.conn.execute("SELECT kind, baseline FROM events WHERE property_id='10:@5 PENDING ST'").fetchall()
     assert [tuple(e) for e in ev] == [("reo", 0)]
 
 

@@ -55,3 +55,33 @@ def test_address_fallback_when_no_block_lot():
 def test_no_match():
     c = fake_client([])
     assert c.lookup("Hudson", "BAYONNE", "88 HARBOR DRIVE", None, None, None) is None
+
+
+def test_address_match_must_sit_on_the_noticed_block():
+    """113 E Main St, block 106 per the notice: a 113 Main St on block 5060 elsewhere is rejected."""
+    from tracker.parcels import ParcelClient
+
+    class PC(ParcelClient):
+        def __init__(self):
+            pass
+
+        def query(self, where, limit=25):
+            if "PROP_LOC LIKE '113 MAIN" in where:
+                return [{"PAMS_PIN": "1608_5060_28", "MUN_NAME": "PATERSON CITY", "PCLBLOCK": "5060",
+                         "PCLLOT": "28", "PROP_CLASS": "1", "PROP_LOC": "113 MAIN STREET"}]
+            return []
+
+    assert PC().lookup("Passaic", "PATERSON", "113 E Main Street", "106", None, None) is None
+    assert PC().lookup("Passaic", "PATERSON", "113 E Main Street", None, None, None).block == "5060"
+
+
+def test_label_point_stays_inside_l_shaped_lot():
+    from tracker.parcels import _inside, polygon_label_point
+    # An L: wide bottom bar plus a tall left arm. The vertex average falls outside it.
+    ring = [(0, 0), (10, 0), (10, 2), (2, 2), (2, 10), (0, 10), (0, 0)]
+    x, y = polygon_label_point([ring])
+    assert _inside(x, y, ring)
+    # A plain rectangle with lots of survey points on one side still centres correctly.
+    rect = [(0, 0), (4, 0), (4, 2)] + [(4 - i * 0.01, 2) for i in range(1, 300)] + [(0, 2), (0, 0)]
+    x, y = polygon_label_point([rect])
+    assert abs(x - 2) < 1e-6 and abs(y - 1) < 1e-6
