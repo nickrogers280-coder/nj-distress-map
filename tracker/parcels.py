@@ -105,6 +105,42 @@ def parse_block_lot(*texts: str | None) -> tuple[str | None, str | None, str | N
     return block, lot, qual
 
 
+_LOT_SEG_RE = re.compile(
+    r"\bLOT(?:\(S\)|S)?\b\.?\s*(?:NOS?\.?|NUMBERS?|#)?\s*:?\s*"
+    r"(.{1,90}?)(?=\bTAX\s+BLOCK|\bBLOCKS?\b|\bIN\s+BLOCK|;|\bTAX\s+MAP|\bDIMENSION|\bQUAL|\bF/?K/?A\b|\bCITY\b|\bTOWN|\bBOROUGH|$)",
+    re.I)
+_LOT_TOKEN_RE = re.compile(
+    r"(?<![A-Z0-9.*X])L?([0-9]+(?:\.[0-9]+)?)(?:\s*(?:-|THROUGH|THRU|TO)\s*([0-9]+(?:\.[0-9]+)?))?(?![0-9]*\s*(?:\*|X\b|'|FT\b|FEET))(?![0-9.]*[A-Z])",
+    re.I)
+
+
+def parse_lot_list(*texts: str | None) -> list[str]:
+    """Every tax lot a sheriff's notice names, in order, e.g.
+       'Lot 2 and Lots 3 through 7, Block 86'      -> 2, 3, 4, 5, 6, 7
+       'LOTS 27, 28, 29, 30 AND 31 BLOCK 186'      -> 27 … 31
+       'Tax Lot(s): 11&12 in Block: 2818'          -> 11, 12
+       'LOT: 2.03 ADTL LOTS: L2.04 BLOCK: 87.01'   -> 2.03, 2.04
+    Lots after 'f/k/a' (former numbers) and dimensions are ignored. Uses the first text that
+    names a lot, so a lot list and a legal description aren't mixed."""
+    for text in texts:
+        if not text or re.search(r"\bTHENCE\b", text, re.I):   # metes and bounds name neighbours' lots
+            continue
+        lots: list[str] = []
+        for m in _LOT_SEG_RE.finditer(text):
+            before = text[max(0, m.start() - 8):m.start()].upper()
+            if "FKA" in before or "F/K/A" in before or "DIMENSION" in text[max(0, m.start() - 20):m.start()].upper():
+                continue
+            for t in _LOT_TOKEN_RE.finditer(m.group(1).upper()):
+                a, b = t.group(1), t.group(2)
+                if b and a.isdigit() and b.isdigit() and 0 < int(b) - int(a) <= 30:
+                    lots += [str(i) for i in range(int(a), int(b) + 1)]
+                else:
+                    lots += [a] + ([b] if b else [])
+        if lots:
+            return list(dict.fromkeys(lots))
+    return []
+
+
 # ---------------------------------------------------------------- matching
 
 @dataclass
@@ -178,6 +214,52 @@ def _house_and_street(street: str) -> tuple[str | None, str | None]:
     return m.group(1), (words[0] if words else None)
 
 
+def _ring_area_centroid(ring: list) -> tuple[float, float, float]:
+    a = cx = cy = 0.0
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        f = x1 * y2 - x2 * y1
+        a += f
+        cx += (x1 + x2) * f
+        cy += (y1 + y2) * f
+    a /= 2
+    if abs(a) < 1e-14:
+        n = len(ring)
+        return 0.0, sum(p[0] for p in ring) / n, sum(p[1] for p in ring) / n
+    return abs(a), cx / (6 * a), cy / (6 * a)
+
+
+def _inside(x: float, y: float, ring: list) -> bool:
+    inside = False
+    for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def polygon_label_point(rings: list) -> tuple[float, float] | None:
+    """A point (x, y) inside the parcel's largest piece: its area centroid, or — for L- or
+    U-shaped lots where the centroid falls outside — the middle of the widest stretch of the
+    lot along the centroid's latitude. (Averaging the vertices, as before, drifts toward
+    whichever side of the lot has the most survey points.)"""
+    rings = [[tuple(p[:2]) for p in r] for r in rings if len(r) >= 3]
+    if not rings:
+        return None
+    area, cx, cy = max((_ring_area_centroid(r) + (r,) for r in rings), key=lambda t: t[0])[:3]
+    ring = max(rings, key=lambda r: _ring_area_centroid(r)[0])
+    if _inside(cx, cy, ring):
+        return cx, cy
+    xs = sorted((x2 - x1) * (cy - y1) / (y2 - y1) + x1
+                for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]) if (y1 > cy) != (y2 > cy))
+    spans = [(xs[i + 1] - xs[i], (xs[i] + xs[i + 1]) / 2) for i in range(0, len(xs) - 1, 2)]
+    return (max(spans)[1], cy) if spans else (cx, cy)
+
+
+def _same_block(a: str | None, b: str | None) -> bool:
+    """Blocks match ignoring padding and trailing '.00' (e.g. '106' vs '106.00')."""
+    norm = lambda x: re.sub(r"\.0+$", "", (x or "").strip().upper())
+    return norm(a) == norm(b) and norm(a) != ""
+
+
 class ParcelClient:
     def __init__(self, timeout: int = 30, delay: float = 0.3, session: requests.Session | None = None):
         self.s = session or requests.Session()
@@ -225,15 +307,29 @@ class ParcelClient:
             r.raise_for_status()
             feats = r.json().get("features", [])
             rings = feats[0]["geometry"]["rings"] if feats else []
-            pts = [p for ring in rings for p in ring]
-            if not pts:
-                return None
-            lon = sum(p[0] for p in pts) / len(pts)
-            lat = sum(p[1] for p in pts) / len(pts)
-            return round(lat, 6), round(lon, 6)
+            pt = polygon_label_point(rings)
+            return (round(pt[1], 6), round(pt[0], 6)) if pt else None
         except Exception as e:  # noqa: BLE001
             log.warning("Centroid lookup failed for %s: %s", pams_pin, e)
             return None
+
+    def sibling_lots(self, primary_pin: str, block: str, lots: list[str]) -> list[dict]:
+        """Tax parcels for the other lots a notice names, in the same town and block as the
+        matched parcel (the PAMS_PIN starts with the municipality code)."""
+        mun = primary_pin.split("_")[0]
+        want = [l for l in lots if l]
+        if not mun or not block or not want:
+            return []
+        in_list = ",".join(f"'{_q(l)}'" for l in want[:40])
+        where = f"PAMS_PIN LIKE '{_q(mun)}\\_%' ESCAPE '\\' AND PCLBLOCK='{_q(block)}' AND PCLLOT IN ({in_list})"
+        rows = self.query(where, limit=100)
+        if not rows:   # some services don't honour ESCAPE; the block filter keeps it to one town anyway
+            rows = [r for r in self.query(f"PAMS_PIN LIKE '{_q(mun)}%' AND PCLBLOCK='{_q(block)}' "
+                                          f"AND PCLLOT IN ({in_list})", limit=100)
+                    if (r.get("PAMS_PIN") or "").startswith(mun + "_")]
+        # Whole lots only: a condo building's unit records share the lot number.
+        base = [r for r in rows if not (r.get("PCLQCODE") or "").strip()]
+        return base or rows
 
     def lookup(self, county: str, city: str, street: str, block: str | None,
                lot: str | None, qual: str | None) -> ParcelMatch | None:
@@ -279,10 +375,27 @@ class ParcelClient:
             if m:
                 return m
 
-        # 2) House number + first street word.
+        # 1b) Block only (lot missing from the notice) + house number.
+        if block and not lot and house:
+            where = (f"COUNTY='{county_u}' AND PCLBLOCK='{_q(block)}' "
+                     f"AND PROP_LOC LIKE '{_q(house)} %'")
+            cands = self.query(where)
+            if city_u:
+                cands = [c for c in cands if (c.get("MUN_NAME") or "").upper().startswith(city_u)] or \
+                    ([] if len({c.get("MUN_NAME") for c in cands}) > 1 else cands)
+            if word:
+                cands = [c for c in cands if word[:4] in (c.get("PROP_LOC") or "").upper()]
+            m = pick(cands, "block+address")
+            if m:
+                return m
+
+        # 2) House number + first street word. If the notice gives a block, the parcel must be
+        #    on that block — otherwise the same address in the wrong place could match.
         if house and word:
             where = f"COUNTY='{county_u}' AND PROP_LOC LIKE '{_q(house)} {_q(word[:6])}%'"
             cands = self.query(where)
+            if block:
+                cands = [c for c in cands if _same_block(c.get("PCLBLOCK"), block)]
             if city_u:
                 same = [c for c in cands if (c.get("MUN_NAME") or "").upper().startswith(city_u)]
                 if same:

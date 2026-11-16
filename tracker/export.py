@@ -9,7 +9,7 @@ from pathlib import Path
 from .civilview import CivilViewClient
 from .db import DB
 
-TRACKED = ("target", "possible")
+TRACKED = ("target", "land")
 
 PROPERTY_FIELDS = [
     "property_id", "category", "category_reason", "is_open", "closed_at", "first_seen", "county",
@@ -18,11 +18,12 @@ PROPERTY_FIELDS = [
     "yr_constr", "last_sale_price", "last_sale_date", "sale_date", "latest_status", "sheriff_number",
     "court_case", "plaintiff", "defendant", "judgment", "upset", "attorney", "attorney_phone",
     "description", "lat", "lon", "geo_source", "outcome", "outcome_date", "outcome_status",
+    "net_value_total",
 ]
 
 CSV_COLUMNS = [
     "category", "county", "muni", "street", "city", "zip", "block", "lot", "qual", "prop_class",
-    "class_label", "net_value", "calc_acre", "bldg_desc", "yr_constr", "sale_date", "latest_status",
+    "class_label", "net_value", "net_value_total", "calc_acre", "bldg_desc", "yr_constr", "sale_date", "latest_status",
     "sheriff_number", "court_case", "plaintiff", "defendant", "judgment", "upset", "attorney",
     "attorney_phone", "last_sale_price", "last_sale_date", "lat", "lon", "first_seen", "property_id",
     "outcome", "outcome_date",
@@ -38,7 +39,7 @@ def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, cl
     c = db.conn
 
     rows = c.execute(
-        f"""SELECT * FROM listings WHERE category IN ('target','possible')
+        f"""SELECT * FROM listings WHERE category IN ('target','land')
             AND (is_open=1 OR closed_at >= ? OR (outcome='reo' AND outcome_date >= ?))
             ORDER BY sale_date""", (closed_cutoff, reo_cutoff)).fetchall()
     props = []
@@ -50,7 +51,12 @@ def build_map_data(db: DB, now: datetime | None = None, alert_days: int = 30, cl
             p["status_history"] = json.loads(r.get("status_history") or "[]")
         except json.JSONDecodeError:
             p["status_history"] = []
-        p["detail_url"] = CivilViewClient.detail_url(r["property_id"])
+        p["detail_url"] = CivilViewClient.listing_url(r)
+        for k in ("parcel_pins", "lots"):
+            try:
+                p[k] = json.loads(r.get(k) or "null")
+            except json.JSONDecodeError:
+                p[k] = None
         props.append(p)
         ids.add(r["property_id"])
 
@@ -79,7 +85,7 @@ def export_all(db: DB, out_dir: Path, reo_days: int = 365) -> None:
         w.writeheader()
         w.writerows(db.open_leads())
     reo = [dict(r) for r in db.conn.execute(
-        "SELECT * FROM listings WHERE outcome='reo' AND category IN ('target','possible') ORDER BY outcome_date DESC")]
+        "SELECT * FROM listings WHERE outcome='reo' AND category IN ('target','land') ORDER BY outcome_date DESC")]
     with open(out_dir / "reo.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         w.writeheader()

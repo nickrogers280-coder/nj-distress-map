@@ -8,12 +8,52 @@ from datetime import datetime, timedelta, timezone
 
 from .civilview import CivilViewClient, ListingRow, SaleDetail, outcome_from_history
 from .counties import CIVILVIEW_NJ
-from .db import DB
-from .parcels import ParcelClient, looks_like_entity, parse_block_lot
+from .db import DB, norm_address
+from .parcels import ParcelClient, looks_like_entity, parse_block_lot, parse_lot_list
 
 log = logging.getLogger(__name__)
 
-TRACKED = ("target", "possible")
+TRACKED = ("target", "land")
+
+_CONDO_ADDR = re.compile(r"\b(UNIT|APT|APARTMENT|SUITE|STE)\b|#\s*\w", re.I)
+_CONDO_TEXT = re.compile(r"CONDO|CNDO", re.I)
+
+
+def listing_key(cid: int, sheriff_number: str | None, fallback: str) -> str:
+    """Stable ID for a sheriff sale listing.
+
+    CivilView hands out a new PropertyId every time a county refreshes its list, so the
+    PropertyId can't identify a listing from one day to the next. The sheriff number is
+    stable, so listings are keyed by county + sheriff number. `fallback` (normally the
+    normalized address) is used only when the sheriff number is unknown.
+    """
+    sn = re.sub(r"\s+", "", (sheriff_number or "")).upper()
+    return f"{cid}:{sn}" if sn else f"{cid}:@{fallback}"
+
+
+def resolve_key(db: DB, cid: int, row: ListingRow, claimed: set[str] | None = None) -> str | None:
+    """Key for a list row, or None if it can only be settled from the detail page.
+
+    Some counties (Middlesex, Hunterdon, Salem) leave the sheriff number off their list
+    pages; those rows are matched to what's already stored by address.
+    """
+    if row.sheriff_number:
+        return listing_key(cid, row.sheriff_number, "")
+    claimed = claimed or set()
+    hit = db.find_by_cv_id(cid, row.property_id)      # same county refresh as last time
+    if hit and hit not in claimed:
+        return hit
+    addr = norm_address(row.address)
+    if addr:
+        for k in db.find_by_address(cid, addr):      # two filings can share one address
+            if k not in claimed:
+                return k
+    return None
+
+
+def key_after_detail(cid: int, row: ListingRow, detail: SaleDetail) -> str:
+    return listing_key(cid, row.sheriff_number or detail.sheriff_number,
+                       norm_address(row.address or detail.address) or f"id{row.property_id}")
 
 
 def now_iso() -> str:
@@ -32,23 +72,94 @@ def first_defendant(defendant: str | None) -> str:
     return seg.strip()
 
 
+def condo_reason(rec: dict) -> str | None:
+    """Why a listing looks like a condominium unit (residential or commercial), or None."""
+    if (rec.get("qual") or "").upper().startswith("C"):
+        return f"condo qualifier {rec['qual']}"
+    for f in ("bldg_desc", "land_desc"):
+        if _CONDO_TEXT.search(rec.get(f) or ""):
+            return f"tax record says {rec[f].strip()}"
+    if _CONDO_ADDR.search(rec.get("street") or rec.get("address") or ""):
+        return "address is a unit"
+    for f in ("description", "parcel_text"):
+        if re.search(r"CONDOMINIUM", rec.get(f) or "", re.I):
+            return "legal description is a condominium unit"
+    return None
+
+
 def classify(rec: dict, cfg: dict) -> tuple[str, str]:
-    targets = {c.upper() for c in cfg.get("target_classes", ["1", "4A", "4B", "4C"])}
+    """target = tax class 4A/4B/4C, land = class 1 (vacant), other = everything else.
+
+    Condominium units (residential or commercial) and listings that couldn't be matched to a
+    tax parcel are never tracked.
+    """
+    targets = {c.upper() for c in cfg.get("target_classes", ["4A", "4B", "4C"])}
+    land = {c.upper() for c in cfg.get("land_classes", ["1"])}
     pc = (rec.get("prop_class") or "").upper()
-    if pc:
-        if pc in targets:
-            min_val = cfg.get("min_assessed_value") or 0
-            if (rec.get("net_value") or 0) >= min_val:
-                return "target", f"Tax class {pc} ({rec.get('class_label')})"
-            return "other", f"Tax class {pc} below assessed-value threshold"
+    if not pc:
+        return "other", "No tax-record match"
+    if pc not in targets and pc not in land:
         return "other", f"Tax class {pc} ({rec.get('class_label')})"
-    if cfg.get("include_possible", True):
-        owner = first_defendant(rec.get("defendant"))
-        unit = re.search(r"\b(UNIT|APT|APARTMENT)\b", rec.get("street") or "", re.I)
-        amount = max(rec.get("judgment") or 0, rec.get("upset") or 0)
-        if looks_like_entity(owner) and not unit and amount >= (cfg.get("possible_min_amount") or 0):
-            return "possible", f"No tax-record match; owner '{owner}' is a business entity"
-    return "other", "No tax-record match"
+    why = condo_reason(rec)
+    if why:
+        return "other", f"Condominium unit excluded ({why})"
+    if rec.get("net_value") == 0:
+        return "other", "Tax parcel assessed at $0 (condo common area or exempt lot), not the collateral"
+    if pc in land:
+        return "land", f"Tax class {pc} ({rec.get('class_label')})"
+    min_val = cfg.get("min_assessed_value") or 0
+    if (rec.get("net_value") or 0) < min_val:
+        return "other", f"Tax class {pc} below assessed-value threshold"
+    return "target", f"Tax class {pc} ({rec.get('class_label')})"
+
+
+def parcel_audit(cfg: dict, parcels: ParcelClient, db: DB, geocoder=None) -> dict:
+    """One-time re-match of stored listings under the stricter parcel rules: address-only and
+    unmatched listings are looked up again, and every tracked property's pin is re-placed with
+    the improved parcel centre point."""
+    rows = db.conn.execute(
+        "SELECT * FROM listings WHERE (is_open=1 OR outcome='reo') AND "
+        "(match_method IS NULL OR match_method IN ('address','unmatched') OR category IN ('target','land','possible'))"
+    ).fetchall()
+    s = {"checked": 0, "rematched": 0, "repinned": 0}
+    for r in rows:
+        rec = dict(r)
+        before = (rec.get("pams_pin"), rec.get("match_method"))
+        if rec.get("match_method") in (None, "address", "unmatched"):
+            for k in ("pams_pin", "prop_class", "class_label", "prop_loc", "net_value", "land_val", "imprvt_val",
+                      "last_yr_tax", "bldg_desc", "land_desc", "calc_acre", "yr_constr", "last_sale_price",
+                      "last_sale_date", "muni"):
+                rec[k] = None
+            _enrich(rec, parcels, rec.get("county") or "")
+            s["checked"] += 1
+        rec["category"], rec["category_reason"] = classify(rec, cfg)
+        if rec["category"] in TRACKED and rec.get("match_method") not in (None, "address", "unmatched") \
+                and rec.get("pams_pin") and not rec.get("parcel_pins"):
+            _enrich(rec, parcels, rec.get("county") or "")
+            rec["category"], rec["category_reason"] = classify(rec, cfg)
+        if rec["category"] in TRACKED:
+            rec["lat"] = rec["lon"] = rec["geo_source"] = None
+            locate(rec, parcels, geocoder)
+            s["repinned"] += 1
+        s["rematched"] += before != (rec.get("pams_pin"), rec.get("match_method"))
+        db.upsert({k: rec.get(k) for k in rec if k in r.keys()})
+    db.commit()
+    return s
+
+
+def reclassify_all(db: DB, cfg: dict) -> dict:
+    """Re-apply the current rules to every stored listing (no network). Returns counts by change."""
+    changed = {}
+    for r in db.conn.execute("SELECT * FROM listings").fetchall():
+        r = dict(r)
+        cat, why = classify(r, cfg)
+        if (cat, why) != (r.get("category"), r.get("category_reason")):
+            db.conn.execute("UPDATE listings SET category=?, category_reason=? WHERE property_id=?",
+                            (cat, why, r["property_id"]))
+            k = f"{r.get('category')}->{cat}"
+            changed[k] = changed.get(k, 0) + 1
+    db.commit()
+    return changed
 
 
 def _detail_fields(d: SaleDetail) -> dict:
@@ -89,9 +200,33 @@ def _enrich(rec: dict, parcels: ParcelClient, county_name: str) -> dict:
             "calc_acre": m.calc_acre, "yr_constr": m.yr_constr, "last_sale_price": m.sale_price,
             "last_sale_date": m.deed_date, "match_method": m.match_method,
         })
+        _add_sibling_lots(rec, parcels, m)
     else:
         rec["match_method"] = "unmatched"
+        rec["parcel_pins"] = rec["lots"] = None
     return rec
+
+
+def _add_sibling_lots(rec: dict, parcels: ParcelClient, m) -> None:
+    """Record every lot the notice covers (so the map outlines all of the collateral) and
+    their combined assessment."""
+    norm = lambda l: (l or "").strip().upper().removesuffix(".00").removesuffix(".0")
+    named = parse_lot_list(rec.get("parcel_text"), rec.get("description"))
+    if norm(m.lot) not in {norm(l) for l in named}:
+        named = []          # the notice's lot list doesn't include the matched lot; don't trust it
+    others = [l for l in named if norm(l) != norm(m.lot)]
+    pins, lots, total = [m.pams_pin], [m.lot], m.net_value
+    if others and hasattr(parcels, "sibling_lots"):
+        for a in parcels.sibling_lots(m.pams_pin, m.block, others):
+            pin = a.get("PAMS_PIN")
+            if pin and pin not in pins:
+                pins.append(pin)
+                lots.append(a.get("PCLLOT"))
+                if a.get("NET_VALUE") is not None:
+                    total = (total or 0) + a["NET_VALUE"]
+    rec["parcel_pins"] = json.dumps(pins)
+    rec["lots"] = json.dumps(lots)
+    rec["net_value_total"] = total if len(pins) > 1 else None
 
 
 def _history(value) -> list[list]:
@@ -169,23 +304,30 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
         prev_open = db.open_ids(cid)
         seen: set[str] = set()
         for row in rows:
-            pid = row.property_id
-            seen.add(pid)
-            old = db.get(pid)
+            cvid = row.property_id
+            pid = resolve_key(db, cid, row, seen)
+            old = db.get(pid) if pid else None
+            if pid:
+                seen.add(pid)
             try:
                 if old is None:
                     if max_new is not None and stats["details_fetched"] >= max_new:
                         continue
-                    detail = cv.detail(pid)
+                    detail = cv.detail(cvid)
                     stats["details_fetched"] += 1
-                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=True)
+                    pid = key_after_detail(cid, row, detail)
+                    seen.add(pid)
+                    old = db.get(pid)
+                if old is None:
+                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=True, key=pid)
                     db.upsert(rec)
                     db.add_event(pid, ts, "new", baseline=stats["baseline"])
                     stats["new"] += 1
                     stats["new_tracked"] += rec["category"] in TRACKED
                     continue
 
-                upd = {"property_id": pid, "last_seen": ts, "is_open": 1, "closed_at": None,
+                upd = {"property_id": pid, "cv_id": cvid, "addr_norm": norm_address(row.address) or old.get("addr_norm"),
+                       "last_seen": ts, "is_open": 1, "closed_at": None,
                        "list_status": row.status or old.get("list_status")}
                 if not old.get("is_open"):
                     db.add_event(pid, ts, "status", old.get("latest_status"), "Back on the open sale list")
@@ -194,7 +336,7 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
                 last = old.get("last_detail_at")
                 due = not last or datetime.fromisoformat(ts) - datetime.fromisoformat(last) >= refresh_after
                 if old.get("category") in TRACKED and due:
-                    detail = cv.detail(pid)
+                    detail = cv.detail(cvid)
                     stats["details_fetched"] += 1
                     fresh = {k: v for k, v in _detail_fields(detail).items() if v not in (None, "")}
                     fresh.pop("county", None)
@@ -211,8 +353,11 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
             final = None
             if old.get("category") in TRACKED:
                 try:
-                    d = cv.detail(pid)
+                    d = cv.detail(old.get("cv_id") or pid)
                     stats["details_fetched"] += 1
+                    if d.sheriff_number and old.get("sheriff_number") and \
+                            re.sub(r"\s+", "", d.sheriff_number) != re.sub(r"\s+", "", old["sheriff_number"]):
+                        raise ValueError("detail page now belongs to a different listing")
                     final = d.latest_status or None
                     outcome, odate, ostatus = outcome_from_history(d.status_history)
                     db.upsert({"property_id": pid, "status_history": json.dumps(d.status_history),
@@ -232,9 +377,11 @@ def run(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: str |
 
 
 def build_record(cfg: dict, parcels: ParcelClient, geocoder, cid: int, cname: str, row: ListingRow,
-                 detail: SaleDetail, ts: str, is_open: bool) -> dict:
+                 detail: SaleDetail, ts: str, is_open: bool, key: str | None = None) -> dict:
     """A new listing record from a list row + its detail page, enriched and classified."""
-    rec = {"property_id": row.property_id, "county_id": cid, "county": cname, "list_status": row.status,
+    key = key or key_after_detail(cid, row, detail)
+    rec = {"property_id": key, "cv_id": row.property_id, "addr_norm": norm_address(row.address) or None,
+           "county_id": cid, "county": cname, "list_status": row.status,
            "is_open": 1 if is_open else 0, "first_seen": ts, "last_seen": ts, "last_detail_at": ts}
     rec.update({k: v for k, v in _detail_fields(detail).items() if v not in (None, "")})
     rec["county"] = cname
@@ -279,9 +426,10 @@ def run_reo(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: s
             continue
         s["sold_rows"] += len(rows)
         for row in rows:
-            pid = row.property_id
+            cvid = row.property_id
             if row.sale_date and row.sale_date < cutoff:
                 continue
+            pid = resolve_key(db, cid, row) or listing_key(cid, None, norm_address(row.address) or f"id{cvid}")
             existing = db.get(pid)
             if existing and existing.get("outcome") in ("reo", "third_party"):
                 continue
@@ -293,20 +441,24 @@ def run_reo(cfg: dict, cv: CivilViewClient, parcels: ParcelClient, db: DB, ts: s
                 s["reo_capped"] = True
                 break
             try:
-                detail = cv.detail(pid)
+                detail = cv.detail(cvid)
                 s["sold_details"] += 1
                 outcome, odate, ostatus = outcome_from_history(detail.status_history)
                 db.mark_sold_checked(pid, cid, ts, outcome)
+                if not existing and not row.sheriff_number and detail.sheriff_number:
+                    pid = listing_key(cid, detail.sheriff_number, "")
+                    existing = db.get(pid)
                 if outcome is None:
                     continue
                 fields = {"outcome": outcome, "outcome_date": odate or row.sale_date, "outcome_status": ostatus,
                           "status_history": json.dumps(detail.status_history),
                           "latest_status": detail.latest_status}
+                fields["cv_id"] = cvid
                 if existing:
                     db.upsert({"property_id": pid, **fields})
                     rec = {**existing, **fields}
                 elif outcome == "reo":
-                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=False)
+                    rec = build_record(cfg, parcels, geocoder, cid, cname, row, detail, ts, is_open=False, key=pid)
                     rec.update(fields)
                     rec["closed_at"] = ts
                     db.upsert(rec)

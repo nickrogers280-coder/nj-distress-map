@@ -368,3 +368,11 @@ class CivilViewClient:
     @staticmethod
     def detail_url(property_id: str) -> str:
         return f"{BASE}/Sales/SaleDetails?PropertyId={property_id}"
+
+    @staticmethod
+    def listing_url(rec: dict) -> str:
+        """Link for a stored listing. Detail links only work until the county's next refresh
+        (CivilView renumbers listings), so off-list properties link to the county's list."""
+        if rec.get("is_open") and rec.get("cv_id"):
+            return CivilViewClient.detail_url(rec["cv_id"])
+        return f"{BASE}/Sales/SalesSearch?countyId={rec.get('county_id')}"

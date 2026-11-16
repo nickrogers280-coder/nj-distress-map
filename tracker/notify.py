@@ -18,7 +18,7 @@ from .civilview import CivilViewClient
 from .db import DB
 
 log = logging.getLogger(__name__)
-TRACKED = ("target", "possible")
+TRACKED = ("target", "land")
 TEMPLATES = Path(__file__).parent / "templates"
 
 KIND_LABEL = {
@@ -74,7 +74,7 @@ def card(l: dict) -> dict:
         "block_lot": block_lot,
         "debt_to_value": ratio,
         "maps_url": maps,
-        "detail_url": CivilViewClient.detail_url(l["property_id"]),
+        "detail_url": CivilViewClient.listing_url(l),
         "history_tail": [{"status": h[0], "date": nice_date(h[1] if len(h) > 1 else None)} for h in hist[-4:]][::-1],
     }
 
