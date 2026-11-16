@@ -6,16 +6,13 @@
 #  52 Cape May  73 Middlesex  85 Ocean (not updated since Feb 2026)
 counties: all
 
-# NJ MOD-IV property classes that count as targets:
-#   1 vacant land, 4A commercial, 4B industrial, 4C apartments (5+ units)
-target_classes: ["1", "4A", "4B", "4C"]
+# NJ MOD-IV property classes tracked on the map. Condominium units (residential or
+# commercial) are always excluded, as are listings that can't be matched to a tax parcel.
+target_classes: ["4A", "4B", "4C"]   # commercial, industrial, apartments (5+)
+land_classes: ["1"]                  # vacant land, shown as its own category
 
 # Skip target properties assessed below this (0 = no minimum).
 min_assessed_value: 0
-
-# Flag listings that can't be matched to a tax record but whose owner is an LLC/corp.
-include_possible: true
-possible_min_amount: 0        # minimum judgment or upset price for those
 
 # Bank-owned (REO): properties the foreclosing lender bought back at sheriff sale.
 reo_enabled: true

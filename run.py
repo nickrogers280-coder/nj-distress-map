@@ -82,6 +82,11 @@ def main(argv=None) -> int:
     backfill_upset(db)
     started = pipeline.now_iso()
     geocoder = Geocoder()
+    if db.get_meta("parcel_audit_v1") != "1":
+        log.info("Parcel audit: %s", pipeline.parcel_audit(cfg, parcels, db, geocoder))
+        db.set_meta("parcel_audit_v1", "1")
+        db.commit()
+    log.info("Reclassified: %s", pipeline.reclassify_all(db, cfg))
     stats = pipeline.run(cfg, cv, parcels, db, ts=started, geocoder=geocoder)
     if cfg.get("reo_enabled", True) and not args.no_reo:
         stats.update(pipeline.run_reo(cfg, cv, parcels, db, ts=started, geocoder=geocoder))

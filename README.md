@@ -65,9 +65,10 @@ Verification, then create one under "App passwords"), and `ALERT_TO` (comma-sepa
 
 ## Settings: `config.yaml`
 - `counties`: which counties to scan
-- `target_classes`: which tax classes count (default 1, 4A, 4B, 4C)
+- `target_classes`: tax classes tracked as commercial (4A commercial, 4B industrial, 4C apartments)
+- `land_classes`: tax classes tracked as vacant land (class 1), shown as their own category
+- Condominium units (residential or commercial) and listings with no tax-parcel match are never tracked
 - `min_assessed_value`: ignore smaller properties
-- `include_possible`: include unmatched LLC/corp-owned listings as "Needs review"
 - `reo_enabled`, `reo_lookback_days`, `max_sold_details_per_run`: the bank-owned (REO) layer
 
 ## If the county sites block GitHub
