@@ -20,7 +20,8 @@
   --ink-2: #a3b1bf;
   --ink-3: #74859a;
   --pin: #47c7ec;          /* tracked commercial */
-  --pin-possible: #f0a63a; /* needs review */
+  --pin-possible: #f0a63a; /* amber accent */
+  --pin-land: #9bd86b;     /* vacant land */
   --pin-closed: #8794a3;
   --pin-reo: #c58cff;      /* bank-owned (REO) */
   --alert: #ff5c72;
@@ -102,6 +103,9 @@ a { color: var(--pin); }
 .pin i { position: absolute; inset: 0; border-radius: 50%; background: var(--c); border: 2px solid #0b1016; box-shadow: 0 0 0 1.5px var(--c), 0 2px 6px rgba(0,0,0,.6); }
 .pin.target { --c: var(--pin); }
 .pin.possible { --c: var(--pin-possible); }
+.pin.land { --c: var(--pin-land); }
+.lot-label { background: rgba(18,26,35,.85); border: 1px solid var(--parcel); color: var(--parcel); font-family: var(--font-head); font-size: 11px; font-weight: 600; padding: 1px 5px; box-shadow: none; }
+.lot-label::before { display: none; }
 .pin.closed { --c: var(--pin-closed); }
 .pin.reo { --c: var(--pin-reo); }
 .pin.reo i { border-radius: 2px; transform: rotate(45deg) scale(.92); }
@@ -223,8 +227,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     { key: "4A", label: "Commercial", c: "var(--pin)" },
     { key: "4B", label: "Industrial", c: "var(--pin)" },
     { key: "4C", label: "Apartments", c: "var(--pin)" },
-    { key: "1", label: "Land", c: "var(--pin)" },
-    { key: "possible", label: "Needs review", c: "var(--pin-possible)" },
+    { key: "1", label: "Vacant land", c: "var(--pin-land)" },
   ];
   const $ = (s) => document.querySelector(s);
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -279,7 +282,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const days = Math.floor((NOW - new Date(ts)) / 864e5);
     return days <= 0 ? "Today" : days === 1 ? "Yesterday" : days + "d ago";
   };
-  const typeKey = (p) => (p.category === "possible" ? "possible" : p.prop_class || "possible");
+  const typeKey = (p) => (p.category === "land" ? "1" : p.prop_class || "");
   const firstDefendant = (d) => String(d || "").split(/;|\bET\.?\s*ALS?\b|\bA\/K\/A\b/i)[0].trim();
 
   function visible(p) {
@@ -457,14 +460,16 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const hist = (p.status_history || []).slice().reverse();
     const alerts = DATA.alerts.filter((a) => a.property_id === p.property_id).slice(0, 4);
     const debt = +(p.upset || p.judgment || 0);
-    const ratio = debt && p.net_value ? Math.round((100 * debt) / p.net_value) : null;
+    const assessed = p.net_value_total || p.net_value;
+    const ratio = debt && assessed ? Math.round((100 * debt) / assessed) : null;
     const days = p.sale_date ? Math.round((parseDay(p.sale_date) - NOW) / 864e5) : null;
     const when = days == null ? "" : days > 1 ? ` · in ${days} days` : days === 1 ? " · tomorrow" : days === 0 ? " · today" : "";
     const owner = firstDefendant(p.defendant);
     const others = String(p.defendant || "").slice(owner.length).replace(/^[;,\s]+/, "");
-    const bl = p.block ? `Block ${p.block} · Lot ${p.lot}${p.qual ? " · " + p.qual : ""}` : "";
+    const lotList = p.lots && p.lots.length > 1 ? `Lots ${p.lots.join(", ")}` : `Lot ${p.lot}`;
+    const bl = p.block ? `Block ${p.block} · ${lotList}${p.qual ? " · " + p.qual : ""}` : "";
     const ll = p.lat != null ? `${p.lat},${p.lon}` : encodeURIComponent(`${p.street}, ${p.city}, NJ`);
-    const catTag = p.category === "possible" ? `<span class="tag" style="--t:var(--pin-possible)">Needs review</span>` : `<span class="tag" style="--t:var(--pin)">${esc(p.class_label)}${p.prop_class ? " · " + esc(p.prop_class) : ""}</span>`;
+    const catTag = `<span class="tag" style="--t:${p.category === "land" ? "var(--pin-land)" : "var(--pin)"}">${esc(p.class_label)}${p.prop_class ? " · " + esc(p.prop_class) : ""}</span>`;
     $("#detail").innerHTML = `
       <div class="d-head">
         <button class="x" id="d-close" aria-label="Close">×</button>
@@ -478,7 +483,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         <div class="figs">
           <div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>
           <div class="fig"><span>Judgment</span><b>${short$(p.judgment)}</b></div>
-          <div class="fig"><span>Assessed</span><b>${short$(p.net_value)}</b></div>
+          <div class="fig"><span>${p.net_value_total ? `Assessed · ${p.lots.length} lots` : "Assessed"}</span><b>${short$(assessed)}</b></div>
         </div>
         ${ratio != null ? `<div class="meter"><div>Debt is <b>${ratio}%</b> of assessed value</div><div class="bar"><i style="width:${Math.min(ratio, 100)}%;--fill:${ratio >= 90 ? "var(--alert)" : ratio >= 70 ? "var(--pin-possible)" : "var(--ok)"}"></i></div></div>` : ""}
         <div class="sec"><h3>Sheriff sale</h3><dl class="kv">
@@ -548,11 +553,24 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     if (!p.pams_pin || DATA.sample) return;
     const want = p.property_id;
     try {
-      const url = PARCELS + "?" + new URLSearchParams({ where: `PAMS_PIN='${p.pams_pin.replace(/'/g, "''")}'`, outFields: "PAMS_PIN", returnGeometry: "true", outSR: "4326", f: "geojson" });
+      // Every lot the sheriff's notice covers, not just the main one.
+      const pins = (p.parcel_pins && p.parcel_pins.length ? p.parcel_pins : [p.pams_pin]).map((x) => `'${String(x).replace(/'/g, "''")}'`);
+      const url = PARCELS + "?" + new URLSearchParams({ where: `PAMS_PIN IN (${pins.join(",")})`, outFields: "PAMS_PIN,PCLBLOCK,PCLLOT", returnGeometry: "true", outSR: "4326", f: "geojson" });
       const gj = await (await fetch(url)).json();
       if (selected !== want || !gj.features?.length) return;
       if (outline) outline.remove();
-      outline = L.geoJSON(gj, { style: { color: "#ffe066", weight: 2.5, fillColor: "#ffe066", fillOpacity: 0.08, dashArray: "6 4" }, interactive: false }).addTo(map);
+      outline = L.geoJSON(gj, {
+        style: { color: "#ffe066", weight: 2.5, fillColor: "#ffe066", fillOpacity: 0.12, dashArray: "6 4" },
+        interactive: false,
+        onEachFeature: (f, layer) => {
+          const pr = f.properties || {};
+          if (pr.PCLLOT) layer.bindTooltip(`Block ${pr.PCLBLOCK} · Lot ${pr.PCLLOT}`, { permanent: gj.features.length <= 8, direction: "center", className: "lot-label" });
+        },
+      }).addTo(map);
+      if (gj.features.length > 1) {
+        const pad = window.matchMedia("(max-width: 760px)").matches ? [20, 20] : [40, 40];
+        map.fitBounds(outline.getBounds(), { paddingTopLeft: pad, paddingBottomRight: window.matchMedia("(max-width: 760px)").matches ? [20, map.getSize().y * 0.5] : [420, 40], maxZoom: 19 });
+      }
     } catch { /* outline is a nice-to-have */ }
   }
 
