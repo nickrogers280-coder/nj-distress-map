@@ -88,7 +88,7 @@
   {% endif %}
 
   {% if new_possible %}
-  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:10px 0 8px">Possibly commercial — needs a look ({{ new_possible|length }})</td></tr>
+  <tr><td style="font-size:15px;font-weight:700;color:#111827;padding:10px 0 8px">Vacant land ({{ new_possible|length }})</td></tr>
   <tr><td style="font-size:12px;color:#6b7280;padding-bottom:8px">These couldn't be matched to a tax record, but the owner is a business entity.</td></tr>
   <tr><td>{% for c in new_possible %}{{ property_card(c, '#d97706') }}{% endfor %}</td></tr>
   {% endif %}
