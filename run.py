@@ -24,6 +24,7 @@ from tracker.geocode import Geocoder
 from tracker.parcels import ParcelClient
 
 ROOT = Path(__file__).parent
+log = logging.getLogger("tracker")
 
 
 
