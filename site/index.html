@@ -106,6 +106,14 @@ a { color: var(--pin); }
 .pin.land { --c: var(--pin-land); }
 .lot-label { background: rgba(18,26,35,.85); border: 1px solid var(--parcel); color: var(--parcel); font-family: var(--font-head); font-size: 11px; font-weight: 600; padding: 1px 5px; box-shadow: none; }
 .lot-label::before { display: none; }
+.enrich-btn { display: block; width: 100%; margin: 6px 0 4px; padding: 9px 12px; border: 1px solid var(--pin); border-radius: 6px; background: color-mix(in srgb, var(--pin) 14%, transparent); color: var(--ink); font: 600 13px var(--font-head); letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
+.enrich-btn:hover { background: color-mix(in srgb, var(--pin) 26%, transparent); }
+.enrich h4 { margin: 12px 0 4px; font: 600 11px var(--font-head); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+.enrich .people { list-style: none; margin: 0; padding: 0; }
+.enrich .people li { padding: 5px 0; border-bottom: 1px solid var(--line); }
+.enrich-note { margin: 6px 0; padding: 7px 9px; border-left: 3px solid var(--pin-possible); background: color-mix(in srgb, var(--pin-possible) 10%, transparent); font-size: 12.5px; }
+.enrich table.filings { width: 100%; border-collapse: collapse; font-size: 12px; }
+.enrich table.filings td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 .pin.closed { --c: var(--pin-closed); }
 .pin.reo { --c: var(--pin-reo); }
 .pin.reo i { border-radius: 2px; transform: rotate(45deg) scale(.92); }
@@ -244,7 +252,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   const parseDay = (s) => (s ? new Date(String(s).slice(0, 10) + "T12:00:00") : null);
   const fmtDate = (s) => { const d = parseDay(s); return d && !isNaN(d) ? d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"; };
   const isoToNice = (t) => String(t ?? "").replace(/\d{4}-\d{2}-\d{2}/g, (m) => fmtDate(m));
-  const titleCase = (s) => String(s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Llc|Lp|Llp|Pllc|Pc|Inc|Na|Nj|Us|Usa)\b/g, (m) => m.toUpperCase());
+  const titleCase = (s) => String(s || "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(Llc|Lp|Llp|Pllc|Pc|Inc|Na|Nj|Us|Usa|Fsb|Cmbs|Reit)\b/g, (m) => m.toUpperCase());
 
   let DATA, NOW, LAST_VISIT, map, layers, markers = new Map(), selected = null, outline = null, tab = "alerts";
   const STATUSES = [
@@ -499,6 +507,11 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
           <dt>Lender</dt><dd>${esc(titleCase(p.plaintiff) || "—")}</dd>`}
           <dt>Attorney</dt><dd>${esc(titleCase(p.attorney) || "—")}${p.attorney_phone ? `<div class="mono">${esc(p.attorney_phone)}${copyBtn(p.attorney_phone)}</div>` : ""}</dd>
         </dl></div>
+        <div class="sec enrich" id="enrich-sec">
+          <h3>Owner &amp; lender contacts</h3>
+          <button class="enrich-btn" id="enrich-btn" type="button">Enrich contact info</button>
+          <p class="note">Reads the county's recorded mortgages and filings for the people behind the owner and the loan.</p>
+        </div>
         <div class="sec"><h3>Tax record</h3>${p.prop_class ? `<dl class="kv">
           <dt>Class</dt><dd>${esc(p.prop_class)} · ${esc(p.class_label)}</dd>
           ${p.bldg_desc ? `<dt>Building</dt><dd class="mono">${esc(p.bldg_desc)}</dd>` : ""}
@@ -517,12 +530,65 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         ${p.lat == null ? `<p class="note">No map location yet: the address couldn't be matched to a parcel or geocoded.</p>` : ""}
       </div>`;
     $("#d-close").onclick = closeDetail;
+    $("#enrich-btn").onclick = () => showContacts(p);
     $("#detail").querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => {
       const txt = b.dataset.copy;
       Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { b.textContent = "Copied"; }, () => {
         const r = document.createRange(); r.selectNodeContents(b.previousElementSibling || b); getSelection().removeAllRanges(); getSelection().addRange(r);
       });
     });
+  }
+
+  // ---- Contact enrichment -------------------------------------------------
+  // canEnrich() is the single gate for this feature: swap it for a real entitlement check
+  // (signed-in, paid account) when contacts move behind a paywall. On GitHub Pages the data
+  // file itself is public, so a real paywall also means serving contacts.json from a backend.
+  const canEnrich = () => true;
+  let CONTACTS = null;
+  async function loadContacts() {
+    if (CONTACTS) return CONTACTS;
+    if (DATA.sample) return (CONTACTS = {});
+    try { CONTACTS = await (await fetch("data/contacts.json", { cache: "no-cache" })).json(); } catch { CONTACTS = {}; }
+    return CONTACTS;
+  }
+  const PRESS_COUNTIES = { Essex: "https://press.essexregister.com/prodpress/clerk/ClerkHome.aspx?op=basic", Passaic: "https://records.passaiccountynj.org/press/clerk/ClerkHome.aspx?op=basic" };
+  async function showContacts(p) {
+    const sec = $("#enrich-sec");
+    if (!sec) return;
+    if (!canEnrich()) { sec.innerHTML = `<h3>Owner &amp; lender contacts</h3><p class="note">Contact enrichment is available on paid plans.</p>`; return; }
+    sec.innerHTML = `<h3>Owner &amp; lender contacts</h3><p class="note">Loading…</p>`;
+    const all = await loadContacts();
+    if (selected !== p.property_id) return;
+    const c = all[p.property_id];
+    if (!c) {
+      sec.innerHTML = `<h3>Owner &amp; lender contacts</h3><p class="note">Not enriched yet. Properties are researched overnight, largest first; check back after the next daily update.</p>`;
+      return;
+    }
+    const o = c.owner || {}, l = c.lender || {}, loan = l.loan || {};
+    const person = (x) => `<li><b>${esc(x.name)}</b>${x.title ? `, ${esc(x.title)}` : ""}${x.entity ? ` <span class="note">of ${esc(titleCase(x.entity))}</span>` : ""}${x.seen_on ? `<div class="note">Named on ${esc(x.seen_on.slice(0, 3).join("; "))}</div>` : ""}</li>`;
+    const people = [...(o.signers || []).map((s) => ({ ...s, src: "signed" }))];
+    for (const x of o.people || []) if (!people.some((y) => y.name.toLowerCase() === x.name.toLowerCase())) people.push(x);
+    const filings = (o.filings || []).slice(0, 8);
+    const records = PRESS_COUNTIES[c.county];
+    sec.innerHTML = `
+      <h3>Owner &amp; lender contacts</h3>
+      ${(c.notes || []).map((n) => `<div class="enrich-note">${esc(n)}</div>`).join("")}
+      <h4>Owner side</h4>
+      ${people.length ? `<ul class="people">${people.map(person).join("")}</ul>` : `<p class="note">${c.source ? "No individuals named on the owner's recorded filings." : "No recorded-document search for this county yet."}</p>`}
+      ${o.related_entities && o.related_entities.length ? `<p class="note">Related companies named in the case: ${esc(o.related_entities.map(titleCase).join(", "))}</p>` : ""}
+      <h4>Lender side</h4>
+      <dl class="kv">
+        <dt>Lender type</dt><dd>${esc(l.kind || "—")}</dd>
+        ${loan.lender ? `<dt>Loan</dt><dd>${esc(titleCase(loan.lender))}${loan.amount ? ` · <b>${money(loan.amount)}</b>` : ""}${loan.date ? ` · ${fmtDate(loan.date)}` : ""}</dd>` : ""}
+        ${loan.prepared_by ? `<dt>Prepared by</dt><dd><b>${esc(loan.prepared_by)}</b><div class="note">Usually the loan officer or lending team; sometimes the lender's attorney</div></dd>` : ""}
+        ${loan.notice_address && loan.notice_address.length ? `<dt>Lender address</dt><dd>${loan.notice_address.map(esc).join("<br>")}</dd>` : ""}
+        ${l.servicer ? `<dt>${esc(l.servicer.role)}</dt><dd><b>${esc(l.servicer.name)}</b><div class="note">Handles the loan for the trust: the decision-maker on a sale</div></dd>` : ""}
+        ${l.trustee ? `<dt>Trustee</dt><dd>${esc(l.trustee)}</dd>` : ""}
+        ${l.bank ? `<dt>Bank HQ</dt><dd>${esc(titleCase(l.bank.name))}<div>${esc(titleCase(l.bank.hq))}</div>${l.bank.website ? `<a href="${/^https?:/.test(l.bank.website) ? esc(l.bank.website) : "https://" + esc(l.bank.website)}" target="_blank" rel="noopener">${esc(l.bank.website)}</a>` : ""}</dd>` : ""}
+        ${l.foreclosure_counsel ? `<dt>Foreclosure counsel</dt><dd>${esc(titleCase(l.foreclosure_counsel.name))}${l.foreclosure_counsel.phone ? `<div class="mono">${esc(l.foreclosure_counsel.phone)}</div>` : ""}</dd>` : ""}
+      </dl>
+      ${filings.length ? `<details><summary>Recorded filings (${(o.filings || []).length})</summary><table class="filings"><tbody>${filings.map((f) => `<tr><td>${fmtDate(f.recorded)}</td><td>${esc(f.kind)}${f.to && f.to.length ? `<div class="note">${esc((f.type.match(/^DEED/) ? "to " : "→ ") + f.to.map(titleCase).join(", "))}</div>` : ""}</td><td class="mono">${esc(f.instrument)}</td></tr>`).join("")}</tbody></table></details>` : ""}
+      <p class="note">From public records${records ? ` (<a href="${records}" target="_blank" rel="noopener">${esc(c.county)} County clerk</a>, search by instrument #)` : ""} · researched ${ago(c.generated_at)}. Verify before outreach.</p>`;
   }
 
   function select(id, fly) {
