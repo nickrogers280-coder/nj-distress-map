@@ -18,7 +18,7 @@ from .contacts import (DocFacts, lender_profile, merge_facts, parse_document, pe
                        search_terms)
 from .db import DB
 from .parcels import looks_like_entity
-from .press import PRESS_SITES, PressClient, ocr_png
+from .press import BROWSER_UA, PRESS_SITES, PressClient, ocr_png
 
 log = logging.getLogger(__name__)
 
@@ -299,7 +299,7 @@ def run_enrichment(db: DB, limit: int = 25, headless: bool = True) -> dict:
             client = None
             if cid in PRESS_SITES and browser is not None:
                 if cid not in clients:
-                    ctx = browser.new_context(user_agent="Mozilla/5.0 (NJ-Distress-Tracker; public records research)")
+                    ctx = browser.new_context(user_agent=BROWSER_UA, viewport={"width": 1400, "height": 1000})
                     clients[cid] = PressClient(PRESS_SITES[cid], ctx.new_page())
                 client = clients[cid]
             else:

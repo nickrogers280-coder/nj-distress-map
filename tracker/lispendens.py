@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from .db import DB
 from .parcels import ParcelClient, parse_block_lot
-from .press import PRESS_SITES, PressClient, ocr_png
+from .press import BROWSER_UA, PRESS_SITES, PressClient, ocr_png
 
 log = logging.getLogger(__name__)
 
@@ -319,7 +319,7 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
         baseline = row is None
         start = (date.fromisoformat(row[0]) - timedelta(days=overlap)) if row else today - timedelta(days=lookback)
         try:
-            ctx = browser.new_context(user_agent="Mozilla/5.0 (NJ-Distress-Tracker; public records research)")
+            ctx = browser.new_context(user_agent=BROWSER_UA, viewport={"width": 1400, "height": 1000})
             client = PressClient(base, ctx.new_page())
             rows = index_rows(client, LP_FORECLOSURE, start, today)
             rows += index_rows(client, LP_IN_REM, start, today)

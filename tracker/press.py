@@ -18,6 +18,10 @@ PRESS_SITES = {
     2: "https://press.essexregister.com/prodpress/clerk/",       # Essex
     17: "https://records.passaiccountynj.org/press/clerk/",      # Passaic
 }
+# ASP.NET serves a reduced, script-less page to browsers it doesn't recognise, and the image viewer
+# then never loads; so present a standard Chrome identity, still naming the tracker at the end.
+BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 "
+              "Safari/537.36 NJ-Distress-Tracker/1.0 (public records research)")
 F = ""   # fields are matched by the end of their name: Essex prefixes them "ctl00$ContentPlaceHolder1$", Passaic "_ctl0:PageContent:"
 
 
@@ -177,7 +181,7 @@ class PressClient:
             return None
         deadline, tried_direct = time.time() + 60, set()
         while time.time() < deadline:
-            for fr in self.page.frames:
+            for fr in [f for pg in self.page.context.pages for f in pg.frames]:
                 if "RetrieveImage" in fr.url and fr.url not in tried_direct:
                     # Some sessions get the document file itself (PDF or TIFF) instead of the viewer.
                     tried_direct.add(fr.url)
