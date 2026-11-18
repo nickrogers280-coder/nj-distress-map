@@ -78,13 +78,16 @@ DEBUG_DIR = None   # set by enrich_contacts.py: where screenshots of failed docu
 
 def save_debug(client, name: str, keep: int = 6) -> None:
     """Keep a few screenshots of failed document opens (committed with the data) for diagnosis."""
-    png = getattr(client, "debug_png", None)
-    if not png or DEBUG_DIR is None:
+    png, html = getattr(client, "debug_png", None), getattr(client, "debug_html", None)
+    if DEBUG_DIR is None or not (png or html):
         return
     try:
         DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-        if len(list(DEBUG_DIR.glob("*.png"))) < keep:
-            (DEBUG_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', name)}.png").write_bytes(png)
+        stem = re.sub(r'[^A-Za-z0-9_-]', '_', name)
+        if png and len(list(DEBUG_DIR.glob("*.png"))) < keep:
+            (DEBUG_DIR / f"{stem}.png").write_bytes(png)
+        if html and len(list(DEBUG_DIR.glob("*.html"))) < keep:
+            (DEBUG_DIR / f"{stem}.html").write_text(html)
     except OSError:
         pass
 

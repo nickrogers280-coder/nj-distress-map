@@ -6,7 +6,7 @@ from tracker import sr1a
 
 
 def line(district="0714", block="0081401", lot="0002102", cls="4A", nu="12 ", anu="012", price=100,
-         deed="022324", rec="071524", loc="847-849 MT PROSPECT AVE", assessed=845600):
+         deed="240223", rec="240715", loc="847-849 MT PROSPECT AVE", assessed=845600):
     l = [" "] * 663
 
     def put(a, text):
@@ -38,11 +38,11 @@ def test_parse_line_and_pin():
 def test_reo_events_with_resale_and_filters():
     sales = [sr1a.parse_line(x) for x in [
         line(),                                                         # lender takes it back for $100
-        line(nu="31 ", anu="031", price=1_250_000, deed="091525"),     # lender sells it on
+        line(nu="31 ", anu="031", price=1_250_000, deed="250915"),     # lender sells it on
         line(block="00376", lot="00015", price=640_000),                # outside buyer at sheriff sale: not REO
         line(block="00377", lot="00001", nu="18 ", anu="018", price=1, cls="1"),   # deed in lieu, vacant land
         line(block="00378", lot="00002", cls="2"),                      # a house: not tracked
-        line(block="00379", lot="00003", deed="061517"),                # before 2018
+        line(block="00379", lot="00003", deed="170615"),                # before 2018
     ]]
     ev = sr1a.reo_events(sales)
     assert [e["pin"] for e in ev] == ["0714_814.01_21.02", "0714_377_1"] or \
@@ -72,7 +72,7 @@ def test_reo_history_run_and_map(tmp_path):
             z.writestr("Sales.txt", "\r\n".join(lines) + "\r\n")
         return buf.getvalue()
 
-    files = {2019: zipped(line(deed="030618")), 2025: zipped(line(block="00376", lot="00015", nu="18 ", anu="018", price=1, deed="010225"))}
+    files = {2019: zipped(line(deed="180306")), 2025: zipped(line(block="00376", lot="00015", nu="18 ", anu="018", price=1, deed="250102"))}
     asked = []
 
     def fetch(years):

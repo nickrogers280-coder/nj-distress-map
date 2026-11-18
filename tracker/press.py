@@ -71,6 +71,10 @@ class PressClient:
     def __init__(self, base: str, page, delay: float = 1.0):
         self.last_error: str | None = None
         self.debug_png: bytes | None = None
+        self.debug_html: str | None = None
+        self.direct_pages: list[bytes] = []   # page PNGs when the site served the document file itself
+        self.fail_streak = 0                   # consecutive documents the viewer couldn't open
+        self.max_fail_streak = 3
         self.base = base
         self.page = page          # a Playwright Page
         self.delay = delay
@@ -129,6 +133,7 @@ class PressClient:
     # ------------------------------------------------------------------ images
     def _fail(self, stage: str, instrument: str) -> None:
         self.last_error = stage
+        self.fail_streak += 1
         log.warning("Viewer failed at '%s' for instrument %s; frames: %s", stage, instrument,
                     [f.url.split("?")[0] for f in self.page.frames])
         try:
@@ -139,7 +144,11 @@ class PressClient:
     def open_document(self, instrument: str) -> tuple[str, int] | None:
         """Open an instrument in the image viewer. Returns (tile URL template, page count).
         On failure, `last_error` names the step and `debug_png` holds a screenshot."""
-        self.last_error, self.debug_png = None, None
+        self.last_error, self.debug_png, self.debug_html, self.direct_pages = None, None, None, []
+        if self.fail_streak >= self.max_fail_streak:
+            # The viewer is down or works differently today: don't spend ~90 seconds per document.
+            self.last_error = "document images unavailable this run"
+            return None
         rows = self.search_instrument(instrument)
         if not rows:
             self._fail("instrument search found nothing", instrument)
@@ -166,9 +175,16 @@ class PressClient:
         if not clicked:
             self._fail("no Get/Display Image button on the record page", instrument)
             return None
-        deadline = time.time() + 90
+        deadline, tried_direct = time.time() + 60, set()
         while time.time() < deadline:
             for fr in self.page.frames:
+                if "RetrieveImage" in fr.url and fr.url not in tried_direct:
+                    # Some sessions get the document file itself (PDF or TIFF) instead of the viewer.
+                    tried_direct.add(fr.url)
+                    pages = self._direct_pages(fr)
+                    if pages:
+                        self.direct_pages, self.fail_streak = pages, 0
+                        return "direct", len(pages)
                 if "ViewerNew" not in fr.url:
                     continue
                 try:
@@ -183,13 +199,41 @@ class PressClient:
                 except Exception:  # noqa: BLE001 - frame navigated away mid-call
                     continue
                 if tile:
+                    self.fail_streak = 0
                     return tile, int(count or 1)
             time.sleep(1.5)
         self._fail("image viewer never loaded", instrument)
         return None
 
+    def _direct_pages(self, frame) -> list[bytes]:
+        """PNG pages from a RetrieveImage frame: fetch what it shows; follow one embedded file link."""
+        urls = [frame.url]
+        try:
+            html = frame.content()
+            self.debug_html = html[:20000]
+            for m in re.finditer(r'(?:src|data|href)\s*=\s*["\']([^"\']+)["\']', html, re.I):
+                u = m.group(1)
+                if re.search(r"\.(pdf|tiff?|png|jpe?g)\b|RetrieveImage|GetImage|Image\.aspx", u, re.I):
+                    urls.append(u if u.startswith("http") else self.base + u.lstrip("/").split("clerk/")[-1])
+        except Exception:  # noqa: BLE001
+            pass
+        for u in urls[:4]:
+            try:
+                r = self.page.request.get(u, timeout=60000)
+            except Exception as e:  # noqa: BLE001
+                log.info("RetrieveImage fetch failed: %s", e)
+                continue
+            ct, body = r.headers.get("content-type", ""), r.body() if r.ok else b""
+            pages = to_pngs(body, ct)
+            log.info("RetrieveImage %s -> %s, %d bytes, %d pages", u.split("?")[0], ct, len(body), len(pages))
+            if pages:
+                return pages
+        return []
+
     def page_image(self, tile_url: str, index: int) -> bytes | None:
         """Full-resolution PNG of one page (0-based) of the open document."""
+        if tile_url == "direct":
+            return self.direct_pages[index] if 0 <= index < len(self.direct_pages) else None
         parts = urlsplit(tile_url)
         q = dict(parse_qsl(parts.query, keep_blank_values=True))
         q.update({"atala_z": "1", "atala_tx": "0", "atala_ty": "0", "atala_tw": "5000", "atala_th": "7000",
@@ -234,6 +278,35 @@ def match_municipality(muni: str | None, options: list[list[str]]) -> str | None
         if c.startswith(want) or want.startswith(c):
             return v
     return None
+
+
+def to_pngs(body: bytes, content_type: str = "") -> list[bytes]:
+    """Split a served document (PDF, multi-page TIFF or a single image) into PNG pages."""
+    import io
+    import subprocess
+    import tempfile
+    if not body:
+        return []
+    if body[:4] == b"%PDF" or "pdf" in content_type:
+        with tempfile.TemporaryDirectory() as d:
+            src = f"{d}/doc.pdf"
+            open(src, "wb").write(body)
+            subprocess.run(["pdftoppm", "-r", "200", "-png", src, f"{d}/p"], capture_output=True, timeout=300)
+            import glob
+            return [open(f, "rb").read() for f in sorted(glob.glob(f"{d}/p*.png"))]
+    if body[:4] in (b"II*\x00", b"MM\x00*") or body[:8] == b"\x89PNG\r\n\x1a\n" or body[:3] == b"\xff\xd8\xff":
+        try:
+            from PIL import Image, ImageSequence
+        except ImportError:
+            return [body] if body[:4] == b"\x89PNG" else []
+        out = []
+        with Image.open(io.BytesIO(body)) as im:
+            for fr in ImageSequence.Iterator(im):
+                buf = io.BytesIO()
+                fr.convert("L").save(buf, "PNG")
+                out.append(buf.getvalue())
+        return out
+    return []
 
 
 def ocr_png(png: bytes) -> str:

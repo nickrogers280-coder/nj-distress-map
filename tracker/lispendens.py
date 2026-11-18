@@ -223,6 +223,9 @@ def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, ci
     rec["plaintiff"] = "; ".join(g["plaintiffs"])
     rec["parties"] = json.dumps({"defendants": g["defendants"], "plaintiffs": g["plaintiffs"]})
     doc = client.open_document(g["instrument"])
+    if not doc:
+        from .enrich import save_debug
+        save_debug(client, f"lp-{cname}-{g['instrument']}")
     texts = []
     if doc:
         tile, n = doc

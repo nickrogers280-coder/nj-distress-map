@@ -75,10 +75,11 @@ def _num(s: str) -> int | None:
     return int(s) if s else None
 
 
-def _ymd(mmddyy: str) -> str | None:
-    if not re.fullmatch(r"\d{6}", mmddyy or ""):
+def _ymd(yymmdd: str) -> str | None:
+    """The file writes dates as YYMMDD (checked against Sales2025: '240614' = June 14, 2024)."""
+    if not re.fullmatch(r"\d{6}", yymmdd or ""):
         return None
-    mm, dd, yy = int(mmddyy[:2]), int(mmddyy[2:4]), int(mmddyy[4:])
+    yy, mm, dd = int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:])
     if not (1 <= mm <= 12 and 1 <= dd <= 31):
         return None
     year = 2000 + yy if yy < 70 else 1900 + yy

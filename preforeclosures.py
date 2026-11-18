@@ -29,6 +29,8 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = yaml.safe_load(Path(args.config).read_text()) or {}
     db = DB(args.db)
+    import tracker.enrich as enrich_mod
+    enrich_mod.DEBUG_DIR = Path(args.db).parent / "debug"
     from playwright.sync_api import sync_playwright
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
