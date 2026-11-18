@@ -153,8 +153,16 @@ class DB:
         if self.get_meta_safe("keyed_by_sheriff") != "1":
             self._rekey_by_sheriff()
         have_ev = {r[1] for r in self.conn.execute("PRAGMA table_info(events)")}
-        if "baseline" not in have_ev:
+        if have_ev and "baseline" not in have_ev:
             self.conn.execute("ALTER TABLE events ADD COLUMN baseline INTEGER DEFAULT 0")
+        if have_ev and self.get_meta_safe("status_noise_v2") != "1":
+            # Status alerts raised when a listing's history loaded for the first time (no earlier
+            # status to compare against) were the listing's past, not news; and several status
+            # entries noticed in one scan were one change, so only the latest of them is kept.
+            self.conn.execute("UPDATE events SET baseline=1 WHERE kind='status' AND old_value IS NULL")
+            self.conn.execute("""DELETE FROM events WHERE kind='status' AND rowid NOT IN (
+                                   SELECT MAX(rowid) FROM events WHERE kind='status' GROUP BY property_id, ts)""")
+            self.set_meta("status_noise_v2", "1")
         self.conn.commit()
 
     def find_by_address(self, county_id: int, addr: str) -> list[str]:

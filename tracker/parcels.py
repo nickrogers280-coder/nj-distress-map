@@ -65,8 +65,8 @@ def looks_like_entity(name: str | None) -> bool:
 # ---------------------------------------------------------------- block / lot extraction
 
 _NUM = r"([0-9]+(?:\.[0-9]+)?[A-Z]?)"
-_BLOCK_RE = re.compile(r"\bBLOCKS?\b\.?\s*(?:NO\.?|NUMBER|#)?\s*:?\s*" + _NUM, re.I)
-_LOT_RE = re.compile(r"\bLOTS?\b\.?\s*(?:NO\.?|NUMBER|#)?\s*:?\s*" + _NUM, re.I)
+_BLOCK_RE = re.compile(r"\bBLOCKS?\b(?:\(S\))?\.?\s*(?:NO\.?|NUMBER|#)?\s*:?\s*" + _NUM, re.I)
+_LOT_RE = re.compile(r"\bLOTS?\b(?:\(S\))?\.?\s*(?:NO\.?|NUMBER|#)?\s*:?\s*" + _NUM, re.I)
 _QUAL_RE = re.compile(r"\bQUAL(?:IFIER)?\.?\s*(?:NO\.?|#)?\s*:?\s*(C[0-9A-Z]{3,6}|[0-9A-Z]{4,6})\b", re.I)
 
 

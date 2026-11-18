@@ -29,6 +29,8 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = yaml.safe_load(Path(args.config).read_text()) or {}
     db = DB(args.db)
+    import tracker.enrich as enrich_mod
+    enrich_mod.DEBUG_DIR = Path(args.db).parent / "debug"
     stats = run_enrichment(db, limit=args.limit)
     logging.info("Enrichment: %s", json.dumps(stats))
     export_all(db, Path(args.db).parent, reo_days=int(cfg.get("reo_lookback_days", 365)))

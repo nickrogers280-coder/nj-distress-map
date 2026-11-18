@@ -25,6 +25,16 @@ log = logging.getLogger(__name__)
 MORTGAGE_RE = re.compile(r"^MORTGAGE\b(?!.*(?:CANCEL|DISCHARGE|SATISF|ASSIGN|RELEASE))", re.I)
 NOTABLE = [
     (re.compile(r"NOTICE OF SETTLEMENT", re.I), "Notice of settlement (sale or refinance under contract)"),
+    (re.compile(r"LIS PENDENS.*DISCHARGE|DISCHARGE.*LIS PENDENS", re.I), "Lis pendens discharged"),
+    (re.compile(r"LIS PENDENS.*IN REM|IN REM", re.I), "Tax foreclosure (in rem lis pendens)"),
+    (re.compile(r"SHERIFF", re.I), "Sheriff's deed"),
+    (re.compile(r"EASEMENT|RIGHT OF WAY", re.I), "Easement"),
+    (re.compile(r"TAX SALE CERT|TAX CERT", re.I), "Tax sale certificate"),
+    (re.compile(r"REDEMPTION", re.I), "Tax certificate redeemed"),
+    (re.compile(r"ASSIGNMENT OF (LEASES|RENTS)", re.I), "Assignment of leases and rents"),
+    (re.compile(r"LEASE", re.I), "Lease / memorandum of lease"),
+    (re.compile(r"JUDGMENT", re.I), "Judgment"),
+    (re.compile(r"MASTER DEED|CONDOMINIUM", re.I), "Condominium master deed"),
     (re.compile(r"LIS PENDENS", re.I), "Lis pendens"),
     (re.compile(r"^DEED\b", re.I), "Deed"),
     (re.compile(r"ASSIGN", re.I), "Assignment"),
@@ -48,13 +58,73 @@ def ensure_table(db: DB) -> None:
 def candidates(db: DB, limit: int, refresh_days: int = 30) -> list[dict]:
     ensure_table(db)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=refresh_days)).isoformat()
-    rows = db.conn.execute(
-        """SELECT l.* FROM listings l LEFT JOIN enrichment e ON e.property_id = l.property_id
+    rows = [dict(r) for r in db.conn.execute(
+        """SELECT l.*, e.property_id AS done FROM listings l LEFT JOIN enrichment e ON e.property_id = l.property_id
            WHERE l.category IN ('target','land') AND (l.is_open = 1 OR l.outcome = 'reo')
-             AND (e.property_id IS NULL OR e.updated_at < ?)
-           ORDER BY (e.property_id IS NULL) DESC, COALESCE(l.net_value_total, l.net_value, 0) DESC""",
-        (cutoff,)).fetchall()
-    return [dict(r) for r in rows][:limit]
+             AND (e.property_id IS NULL OR e.updated_at < ?)""", (cutoff,))]
+    try:
+        rows += [dict(r) for r in db.conn.execute(
+            """SELECT p.*, e.property_id AS done FROM lis_pendens p LEFT JOIN enrichment e ON e.property_id = p.property_id
+               WHERE p.category IN ('target','land') AND p.status = 'pending'
+                 AND (e.property_id IS NULL OR e.updated_at < ?)""", (cutoff,))]
+    except Exception:  # noqa: BLE001 - no pre-foreclosure table yet
+        pass
+    rows.sort(key=lambda r: (r.get("done") is not None, -(r.get("net_value_total") or r.get("net_value") or 0)))
+    return rows[:limit]
+
+
+DEBUG_DIR = None   # set by enrich_contacts.py: where screenshots of failed document opens go
+
+
+def save_debug(client, name: str, keep: int = 6) -> None:
+    """Keep a few screenshots of failed document opens (committed with the data) for diagnosis."""
+    png = getattr(client, "debug_png", None)
+    if not png or DEBUG_DIR is None:
+        return
+    try:
+        DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        if len(list(DEBUG_DIR.glob("*.png"))) < keep:
+            (DEBUG_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', name)}.png").write_bytes(png)
+    except OSError:
+        pass
+
+
+def _same_block_lot(r, rec: dict) -> bool | None:
+    """True/False when the index row names a block (and lot); None when it doesn't (N/A)."""
+    norm = lambda x: re.sub(r"\.0+$", "", (x or "").strip().upper())
+    if not r.block or norm(r.block) in ("", "N/A", "NA"):
+        return None
+    if norm(r.block) != norm(rec.get("block")):
+        return False
+    lots = {norm(l) for l in (json.loads(rec["lots"]) if rec.get("lots") else [])} | {norm(rec.get("lot"))}
+    return not r.lot or norm(r.lot) in lots
+
+
+def build_history(rec: dict, parcel_rows: list, owner_rows: list, owner: str | None) -> list[dict]:
+    """One timeline of recorded documents for the property, newest first.
+
+    Everything indexed against the parcel's block/lot, plus the owner's filings that either name
+    this block/lot or name no parcel at all (mortgages and lis pendens are often indexed without
+    one). Filings for the owner's other properties are left out."""
+    rows = list(parcel_rows)
+    for r in owner_rows:
+        if owner and not (same_party(r.direct, owner) or same_party(r.indirect, owner)):
+            continue
+        if _same_block_lot(r, rec) is False:
+            continue
+        rows.append(r)
+    by_inst: dict[str, list] = defaultdict(list)
+    for r in rows:
+        by_inst[r.instrument].append(r)
+    out = []
+    for inst, rs in by_inst.items():
+        r0 = rs[0]
+        out.append({"recorded": r0.recorded_iso, "type": r0.doc_type, "kind": classify_filing(r0.doc_type),
+                    "instrument": inst, "from": sorted({r.direct for r in rs if r.direct}),
+                    "to": sorted({r.indirect for r in rs if r.indirect}),
+                    "block": r0.block if r0.block not in ("", "N/A") else None, "lot": r0.lot or None})
+    out.sort(key=lambda f: (f["recorded"] or "", f["instrument"]), reverse=True)
+    return out[:150]
 
 
 def lender_side(rec: dict) -> dict:
@@ -84,6 +154,14 @@ def enrich_one(rec: dict, client: PressClient | None, bank_lookup=None, max_docs
         return out
     out["source"] = client.base
 
+    # The parcel's own record history: everything indexed against its block and lot.
+    parcel_rows = []
+    if rec.get("block") and hasattr(client, "search_block_lot"):
+        try:
+            parcel_rows = client.search_block_lot(rec.get("muni") or rec.get("city") or "", rec["block"], rec.get("lot")) or []
+        except Exception as e:  # noqa: BLE001
+            log.info("Block/lot search failed for %s: %s", rec["property_id"], e)
+
     rows, used = [], None
     for term in search_terms(owner):
         rows = client.search_name(term)
@@ -91,6 +169,7 @@ def enrich_one(rec: dict, client: PressClient | None, bank_lookup=None, max_docs
             used = term
             break
     out["owner"]["name"] = used or owner
+    out["history"] = build_history(rec, parcel_rows, rows, used)
     if not rows:
         out["notes"].append(f"No recorded filings found under “{owner.split(';')[0].strip()}”.")
         return out
@@ -130,7 +209,9 @@ def enrich_one(rec: dict, client: PressClient | None, bank_lookup=None, max_docs
     for f in mortgages:
         doc = client.open_document(f["instrument"])
         if not doc:
-            out["notes"].append(f"Couldn't open mortgage {f['instrument']}.")
+            out["notes"].append(f"Couldn't open mortgage {f['instrument']}"
+                                f"{' (' + client.last_error + ')' if getattr(client, 'last_error', None) else ''}.")
+            save_debug(client, f"{rec.get('county', 'x')}-{f['instrument']}")
             continue
         tile, n = doc
         pages = sorted({i for i in (0, 1, 2, 3, n - 2, n - 1) if 0 <= i < n})
@@ -242,11 +323,29 @@ def run_enrichment(db: DB, limit: int = 25, headless: bool = True) -> dict:
 
 
 def export_contacts(db: DB) -> dict:
+    """Contacts (the paid layer), without the record history, which is published separately."""
     ensure_table(db)
     out = {}
     for pid, updated, status, data in db.conn.execute("SELECT property_id, updated_at, status, data FROM enrichment"):
         try:
-            out[pid] = json.loads(data)
+            d = json.loads(data)
         except json.JSONDecodeError:
             continue
+        d.pop("history", None)
+        out[pid] = d
+    return out
+
+
+def export_history(db: DB) -> dict:
+    """Recorded-document history per property, for the map's 'Public record history' section."""
+    ensure_table(db)
+    out = {}
+    for pid, data in db.conn.execute("SELECT property_id, data FROM enrichment"):
+        try:
+            d = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if d.get("history") is not None:
+            out[pid] = {"generated_at": d.get("generated_at"), "county": d.get("county"), "source": d.get("source"),
+                        "filings": d["history"]}
     return out

@@ -18,7 +18,7 @@ PRESS_SITES = {
     2: "https://press.essexregister.com/prodpress/clerk/",       # Essex
     17: "https://records.passaiccountynj.org/press/clerk/",      # Passaic
 }
-F = "ctl00$ContentPlaceHolder1$"
+F = ""   # fields are matched by the end of their name: Essex prefixes them "ctl00$ContentPlaceHolder1$", Passaic "_ctl0:PageContent:"
 
 
 @dataclass
@@ -41,28 +41,36 @@ class IndexRow:
 
 _ROWS_JS = """() => {
   const out = [];
+  const isView = (e) => (e.type === 'image' && !/imgMaster|imgTab/i.test(e.name || '')) ||
+                        /^\\s*view\\s*$/i.test(e.value || e.textContent || '');
   for (const tr of document.querySelectorAll('tr')) {
     if (tr.querySelector('table')) continue;
-    const btn = tr.querySelector('input[type=image]');
+    const btn = [...tr.querySelectorAll('input,a,button')].find(isView);
     if (!btn) continue;
     const c = [...tr.children].map(td => td.textContent.trim());
-    if (c.length < 8) continue;
-    out.push({c, view: btn.name});
+    if (c.length < 8 || /^Type$/i.test(c[0])) continue;
+    btn.setAttribute('data-njdm', String(out.length));
+    out.push({c, view: String(out.length)});
   }
   return out;
 }"""
 
 _SET_AND_SEARCH_JS = """([fields, button]) => {
+  const by = (suffix) => document.querySelector(`[name$="${suffix}"]`);
   for (const [name, value] of Object.entries(fields)) {
-    const el = document.querySelector(`[name="${name}"]`);
+    const el = by(name);
     if (el) el.value = value;
   }
-  document.querySelector(`[name="${button}"]`).click();
+  const b = by(button);
+  if (!b) throw new Error('search button not found: ' + button);
+  b.click();
 }"""
 
 
 class PressClient:
     def __init__(self, base: str, page, delay: float = 1.0):
+        self.last_error: str | None = None
+        self.debug_png: bytes | None = None
         self.base = base
         self.page = page          # a Playwright Page
         self.delay = delay
@@ -83,21 +91,81 @@ class PressClient:
         return self._search({F + "txtLastNameTab1": name, F + "ddlShowRecTab1": "100",
                              F + "ddlTotalRecTab1": "500"}, F + "btnSearchTab1")
 
+    def search_doc_type(self, label_re: "re.Pattern", start, end) -> list[IndexRow] | None:
+        """Index rows for every document type whose label matches, recorded between two dates."""
+        self.page.goto(self.base + "ClerkHome.aspx?op=basic", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(self.delay)
+        opts = self.page.evaluate("""(n) => [...(document.querySelector(`[name$="${n}"]`)?.options || [])]
+                                     .map(o => [o.value, o.text.trim()])""", F + "ddlDocTypeTab2")
+        values = [v for v, label in opts if v and label_re.search(label)]
+        if not values:
+            log.warning("No document type matches %s at %s", label_re.pattern, self.base)
+            return None
+        rows: list[IndexRow] = []
+        for v in values:
+            rows += self._search({F + "ddlDocTypeTab2": v, F + "txtFromTab2": start.strftime("%m/%d/%Y"),
+                                  F + "txtToTab2": end.strftime("%m/%d/%Y"), F + "ddlShowRecTab2": "100",
+                                  F + "ddlTotalRecTab2": "750"}, F + "btnSearchTab2")
+        return rows
+
+    def search_block_lot(self, muni: str, block: str, lot: str | None) -> list[IndexRow] | None:
+        """Everything indexed against a block (and lot) in one town: the parcel's full record history."""
+        self.page.goto(self.base + "ClerkHome.aspx?op=basic", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(self.delay)
+        opts = self.page.evaluate("""(n) => [...(document.querySelector(`[name$="${n}"]`)?.options || [])]
+                                     .map(o => [o.value, o.text.trim()])""", "ddlMunTab4")
+        value = match_municipality(muni, opts)
+        if value is None:
+            log.info("No municipality in the records site matches %r", muni)
+            return None
+        fields = {"ddlMunTab4": value, "txtBlockTab4": block, "ddlShowRecTab4": "100", "ddlTotalRecTab4": "500"}
+        if lot:
+            fields["txtLotTab4"] = lot
+        return self._search(fields, "btnSearchTab4")
+
     def search_instrument(self, instrument: str) -> list[IndexRow]:
         return self._search({F + "txtInstrumentTab3": instrument}, F + "btnSearchTab3")
 
     # ------------------------------------------------------------------ images
+    def _fail(self, stage: str, instrument: str) -> None:
+        self.last_error = stage
+        log.warning("Viewer failed at '%s' for instrument %s; frames: %s", stage, instrument,
+                    [f.url.split("?")[0] for f in self.page.frames])
+        try:
+            self.debug_png = self.page.screenshot(full_page=True)
+        except Exception:  # noqa: BLE001
+            self.debug_png = None
+
     def open_document(self, instrument: str) -> tuple[str, int] | None:
-        """Open an instrument in the image viewer. Returns (tile URL template, page count)."""
+        """Open an instrument in the image viewer. Returns (tile URL template, page count).
+        On failure, `last_error` names the step and `debug_png` holds a screenshot."""
+        self.last_error, self.debug_png = None, None
         rows = self.search_instrument(instrument)
         if not rows:
+            self._fail("instrument search found nothing", instrument)
             return None
-        with self.page.expect_navigation(wait_until="domcontentloaded", timeout=90000):
-            self.page.click(f'input[name="{rows[0].view}"]')
-        nav = self._wait_frame(lambda f: "NavigateRecords" in f.url)
-        if nav is None:
+        try:
+            with self.page.expect_navigation(wait_until="domcontentloaded", timeout=90000):
+                self.page.evaluate("(i) => document.querySelector(`[data-njdm=\"${i}\"]`).click()", rows[0].view)
+        except Exception as e:  # noqa: BLE001
+            self._fail(f"opening the record ({e.__class__.__name__})", instrument)
             return None
-        nav.click('input[name="btnImage"]')
+        # Essex puts the "Get Image" button in a frame; Passaic ("Display Image") on the page itself.
+        clicked, deadline = False, time.time() + 45
+        while not clicked and time.time() < deadline:
+            for fr in self.page.frames:
+                try:
+                    clicked = fr.evaluate("""() => { const b = document.querySelector('[name$="btnImage"]');
+                                                     if (b) { b.click(); return true; } return false; }""")
+                except Exception:  # noqa: BLE001 - frame still loading
+                    clicked = False
+                if clicked:
+                    break
+            if not clicked:
+                time.sleep(1)
+        if not clicked:
+            self._fail("no Get/Display Image button on the record page", instrument)
+            return None
         deadline = time.time() + 90
         while time.time() < deadline:
             for fr in self.page.frames:
@@ -117,7 +185,7 @@ class PressClient:
                 if tile:
                     return tile, int(count or 1)
             time.sleep(1.5)
-        log.warning("Viewer never loaded for instrument %s", instrument)
+        self._fail("image viewer never loaded", instrument)
         return None
 
     def page_image(self, tile_url: str, index: int) -> bytes | None:
@@ -147,6 +215,25 @@ class PressClient:
                     pass
             time.sleep(1)
         return None
+
+
+_MUNI_WORDS = re.compile(r"\b(TWP|TOWNSHIP|BORO|BOROUGH|CITY|TOWN|VILLAGE|OF|THE)\b\.?", re.I)
+
+
+def match_municipality(muni: str | None, options: list[list[str]]) -> str | None:
+    """'Fairfield Twp' -> the dropdown value labelled 'FAIRFIELD'; 'Orange City' won't pick 'WEST ORANGE'."""
+    core = lambda s: re.sub(r"\s+", " ", _MUNI_WORDS.sub(" ", re.sub(r"[^A-Za-z ]", " ", s or ""))).strip().upper()
+    want = core(muni)
+    if not want:
+        return None
+    cands = [(v, core(label)) for v, label in options if v and not re.search(r"select", label, re.I)]
+    for v, c in cands:
+        if c == want:
+            return v
+    for v, c in cands:
+        if c.startswith(want) or want.startswith(c):
+            return v
+    return None
 
 
 def ocr_png(png: bytes) -> str:

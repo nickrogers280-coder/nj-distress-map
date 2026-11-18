@@ -154,3 +154,29 @@ def test_enrich_without_records_source():
     from tracker.enrich import enrich_one
     out = enrich_one({"property_id": "7:1", "county": "Bergen", "defendant": "X LLC", "plaintiff": "FANNIE MAE"}, None)
     assert out["lender"]["kind"].startswith("Agency") and "aren't searchable" in out["notes"][0]
+
+
+def test_build_history_keeps_this_parcel_only():
+    from tracker.enrich import build_history
+    from tracker.press import IndexRow
+    rec = {"block": "303", "lot": "14", "lots": None}
+    parcel = [IndexRow("DEED", "UCF FAIRFIELD LLC", "1221 BLOOMFIELD LLC", "2022079008", "8/24/2022", "FAIRFIELD", "303", "14", "0"),
+              IndexRow("EASEMENT", "1221 BLOOMFIELD LLC", "PSE&G", "2023000111", "3/1/2023", "FAIRFIELD", "303", "14", "1"),
+              IndexRow("DEED", "OLD OWNER INC", "UCF FAIRFIELD LLC", "2009000123", "5/5/2009", "FAIRFIELD", "303", "14", "2")]
+    owner = [IndexRow("MORTGAGE", "1221 BLOOMFIELD LLC", "WILMINGTON SAVINGS FUND SOCIETY", "2022079009", "8/24/2022", "FAIRFIELD", "N/A", "", "3"),
+             IndexRow("DEED", "UCF FAIRFIELD LLC", "1221 BLOOMFIELD LLC", "2022079008", "8/24/2022", "FAIRFIELD", "303", "14", "4"),
+             IndexRow("MORTGAGE", "1221 BLOOMFIELD LLC", "OTHER BANK", "2024000999", "2/2/2024", "NEWARK", "900", "1", "5")]
+    h = build_history(rec, parcel, owner, "1221 BLOOMFIELD LLC")
+    assert [f["instrument"] for f in h] == ["2023000111", "2022079009", "2022079008", "2009000123"]
+    assert h[0]["kind"] == "Easement" and h[-1]["to"] == ["UCF FAIRFIELD LLC"]
+
+
+def test_match_municipality():
+    from tracker.press import match_municipality
+    opts = [["", "Please Select a Municipality"], ["FAIRFIELD", "FAIRFIELD"], ["ORANGE", "ORANGE"],
+            ["WEST ORANGE", "WEST ORANGE"], ["NEWARK", "NEWARK"], ["02", "CLIFTON CITY"]]
+    assert match_municipality("Fairfield Twp", opts) == "FAIRFIELD"
+    assert match_municipality("Orange City", opts) == "ORANGE"
+    assert match_municipality("West Orange Twp", opts) == "WEST ORANGE"
+    assert match_municipality("Clifton City", opts) == "02"
+    assert match_municipality("Trenton", opts) is None

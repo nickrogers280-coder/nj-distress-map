@@ -14,9 +14,16 @@ land_classes: ["1"]                  # vacant land, shown as its own category
 # Skip target properties assessed below this (0 = no minimum).
 min_assessed_value: 0
 
+# Pre-foreclosures: foreclosure lis pendens from county clerk records (Essex 2, Passaic 17).
+lis_pendens_counties: [2, 17]
+lis_pendens_lookback_days: 270   # first run looks back this far (spread over a few runs)
+max_lis_pendens_per_run: 80      # documents read per run
+
 # Bank-owned (REO): properties the foreclosing lender bought back at sheriff sale.
 reo_enabled: true
-reo_lookback_days: 365        # how far back to show REO on the map
+reo_lookback_days: 3300       # how far back to read sheriff sold lists and show REO (the sites keep ~1-2 years)
+reo_history_since: 2018-01-01 # bank-owned history from the state's deed files (SR-1A) starts here
+reo_history_locate_per_run: 400
 max_sold_details_per_run: 1200  # first pass is spread over a few days at this pace
 sold_recheck_days: 7          # re-check sales whose outcome isn't posted yet
 

@@ -91,6 +91,14 @@ def main(argv=None) -> int:
     stats = pipeline.run(cfg, cv, parcels, db, ts=started, geocoder=geocoder)
     if cfg.get("reo_enabled", True) and not args.no_reo:
         stats.update(pipeline.run_reo(cfg, cv, parcels, db, ts=started, geocoder=geocoder))
+        try:
+            from tracker import reo_history
+            h = reo_history.run(cfg, db, parcels)
+            stats["reo_history"] = {k: h.get(k) for k in ("years", "missing_years", "events", "new", "located", "tracked")}
+            log.info("REO history: %s", stats["reo_history"])
+        except Exception as e:  # noqa: BLE001 - history is extra; never block the daily scan
+            log.exception("REO history failed: %s", e)
+            stats["reo_history"] = {"error": str(e)[:200]}
     report = notify.build_report(db, stats, cfg, started)
     html = notify.render(report)
     Path(args.preview).parent.mkdir(parents=True, exist_ok=True)

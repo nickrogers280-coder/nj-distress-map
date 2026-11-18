@@ -24,6 +24,7 @@
   --pin-land: #9bd86b;     /* vacant land */
   --pin-closed: #8794a3;
   --pin-reo: #c58cff;      /* bank-owned (REO) */
+  --pin-pre: #ffb347;      /* pre-foreclosure (lis pendens) */
   --alert: #ff5c72;
   --parcel: #ffe066;       /* tax-map yellow, for parcel outlines */
   --ok: #5fd39a;
@@ -77,6 +78,20 @@ a { color: var(--pin); }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
 .tabs button { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 0; font-family: var(--font-head); font-weight: 600; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); cursor: pointer; }
 .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--pin); }
+.stages { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; counter-reset: st; }
+.stages li { position: relative; padding: 8px 6px 6px; border-top: 3px solid var(--line); font-size: 11px; color: var(--ink-3); min-width: 0; }
+.stages li b { display: block; font: 600 11px var(--font-head); letter-spacing: .04em; text-transform: uppercase; }
+.stages li span { display: block; margin-top: 2px; overflow-wrap: anywhere; }
+.stages li.done { border-top-color: var(--pin); color: var(--ink-2); }
+.stages li.now { border-top-color: var(--alert); color: var(--ink); }
+.records { list-style: none; margin: 0; padding: 0; }
+.records li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.records .rk { font-weight: 600; color: var(--ink); border-left: 3px solid var(--t); padding-left: 7px; }
+.records time { font-family: var(--font-data); font-size: 11.5px; color: var(--ink-2); }
+.records .rp, .records .note { grid-column: 1 / -1; padding-left: 10px; }
+.records .arrow { color: var(--ink-3); }
+.sec h3 .count { font-family: var(--font-data); font-weight: 400; color: var(--ink-3); margin-left: 4px; }
+.list .day { position: sticky; top: 0; z-index: 1; padding: 6px 14px; background: var(--panel); border-bottom: 1px solid var(--line); font: 600 11px var(--font-head); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
 .tabs .count { font-family: var(--font-data); font-weight: 400; margin-left: 4px; color: var(--ink-3); }
 .list { flex: 1; overflow-y: auto; min-height: 0; }
 .item { display: grid; gap: 3px; width: 100%; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 11px 14px; cursor: pointer; }
@@ -106,6 +121,8 @@ a { color: var(--pin); }
 .pin.land { --c: var(--pin-land); }
 .lot-label { background: rgba(18,26,35,.85); border: 1px solid var(--parcel); color: var(--parcel); font-family: var(--font-head); font-size: 11px; font-weight: 600; padding: 1px 5px; box-shadow: none; }
 .lot-label::before { display: none; }
+.pre-box { margin: 0 0 12px; padding: 9px 11px; border-left: 3px solid var(--pin-pre); background: color-mix(in srgb, var(--pin-pre) 12%, transparent); font-size: 13px; }
+.pre-box b { display: block; margin-bottom: 2px; }
 .enrich-btn { display: block; width: 100%; margin: 6px 0 4px; padding: 9px 12px; border: 1px solid var(--pin); border-radius: 6px; background: color-mix(in srgb, var(--pin) 14%, transparent); color: var(--ink); font: 600 13px var(--font-head); letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
 .enrich-btn:hover { background: color-mix(in srgb, var(--pin) 26%, transparent); }
 .enrich h4 { margin: 12px 0 4px; font: 600 11px var(--font-head); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
@@ -116,6 +133,8 @@ a { color: var(--pin); }
 .enrich table.filings td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 .pin.closed { --c: var(--pin-closed); }
 .pin.reo { --c: var(--pin-reo); }
+.pin.pre { --c: var(--pin-pre); }
+.pin.pre i { background: rgba(255,179,71,.18); border: 3px solid var(--pin-pre); box-shadow: 0 0 0 1.5px #0b1016, 0 2px 6px rgba(0,0,0,.6); }
 .pin.reo i { border-radius: 2px; transform: rotate(45deg) scale(.92); }
 .pin.reo.selected i { transform: rotate(45deg) scale(1.3); }
 .pin.reo .flag { background: var(--pin-reo); color: #1b1026; }
@@ -191,7 +210,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
 <body>
 <div class="app">
   <header class="topbar">
-    <div class="brand"><h1>NJ Distress Map</h1><span class="sub">Commercial properties on county sheriff sale lists</span></div>
+    <div class="brand"><h1>NJ Distress Map</h1><span class="sub">Commercial pre-foreclosures, sheriff sales and bank-owned property</span></div>
     <div class="stats" id="stats"></div>
     <div class="layer-toggle" role="group" aria-label="Map style">
       <button id="lyr-sat" aria-pressed="true">Satellite</button>
@@ -215,7 +234,8 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         <div class="chips" id="status-chips" aria-label="Status"></div>
       </div>
       <div class="tabs" role="tablist">
-        <button role="tab" id="tab-alerts" aria-selected="true">Alerts<span class="count" id="n-alerts"></span></button>
+        <button role="tab" id="tab-alerts" aria-selected="true">Timeline<span class="count" id="n-alerts"></span></button>
+        <button role="tab" id="tab-reo" aria-selected="false">Bank-owned<span class="count" id="n-reo"></span></button>
         <button role="tab" id="tab-props" aria-selected="false">Properties<span class="count" id="n-props"></span></button>
       </div>
       <div class="list" id="list" role="tabpanel"></div>
@@ -256,17 +276,20 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
 
   let DATA, NOW, LAST_VISIT, map, layers, markers = new Map(), selected = null, outline = null, tab = "alerts";
   const STATUSES = [
+    { key: "pre", label: "Pre-foreclosure", c: "var(--pin-pre)" },
     { key: "open", label: "Upcoming sales", c: "var(--pin)" },
     { key: "reo", label: "Bank-owned (REO)", c: "var(--pin-reo)" },
     { key: "off", label: "Other off-list", c: "var(--pin-closed)" },
   ];
-  const state = { q: "", county: "", window: "", statuses: new Set(["open", "reo"]), types: new Set(TYPES.map((t) => t.key)) };
-  const statusKey = (p) => (p.is_open ? "open" : p.outcome === "reo" ? "reo" : "off");
+  const state = { q: "", county: "", window: "", statuses: new Set(["pre", "open", "reo"]), types: new Set(TYPES.map((t) => t.key)) };
+  const isPre = (p) => p.stage === "pre";
+  const statusKey = (p) => (isPre(p) ? (p.lp_status === "pending" ? "pre" : "off") : p.is_open ? "open" : p.outcome === "reo" ? "reo" : "off");
   const isReo = (p) => !p.is_open && p.outcome === "reo";
 
   function alertLabel(a) {
     const v = (a.new_value || "").toLowerCase();
     if (a.kind === "new") return "New listing";
+    if (a.kind === "lis_pendens") return "New lis pendens";
     if (a.kind === "sale_date") return "New sale date";
     if (a.kind === "upset") return "Upset changed";
     if (a.kind === "judgment") return "Judgment changed";
@@ -282,6 +305,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   function alertText(a) {
     const nice = (x) => (a.kind === "upset" || a.kind === "judgment" ? money(x) : a.kind === "sale_date" ? fmtDate(x) : isoToNice(x));
     if (a.kind === "new") return "Added to the sheriff sale list";
+    if (a.kind === "lis_pendens") return "Foreclosure filed by " + titleCase(a.new_value || "the lender");
     if (a.kind === "closed") return "Final status: " + isoToNice(a.new_value);
     if (a.kind === "reo") return "Lender bought it back at sheriff sale" + (a.new_value ? " (" + a.new_value + ")" : "");
     return (a.old_value ? nice(a.old_value) + " → " : "") + nice(a.new_value);
@@ -302,7 +326,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       if (!d || d < NOW - 864e5 || d > +NOW + state.window * 864e5) return false;
     }
     if (state.q) {
-      const hay = [p.street, p.city, p.muni, p.county, p.defendant, p.plaintiff, p.court_case, p.sheriff_number, p.block && "block " + p.block, isReo(p) ? "reo bank-owned bank owned" : ""].join(" ").toLowerCase();
+      const hay = [p.street, p.city, p.muni, p.county, p.defendant, p.plaintiff, p.court_case, p.sheriff_number, p.block && "block " + p.block, isReo(p) ? "reo bank-owned bank owned" : "", isPre(p) ? "lis pendens pre-foreclosure preforeclosure " + (p.instrument || "") : ""].join(" ").toLowerCase();
       if (!state.q.split(/\s+/).every((w) => hay.includes(w))) return false;
     }
     return true;
@@ -340,7 +364,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   }
 
   function pinIcon(p, alert) {
-    const cls = ["pin", p.is_open ? p.category : isReo(p) ? "reo" : "closed", alert ? "alert" : "", selected === p.property_id ? "selected" : ""].join(" ");
+    const cls = ["pin", isPre(p) ? (p.lp_status === "pending" ? "pre" : "closed") : p.is_open ? p.category : isReo(p) ? "reo" : "closed", alert ? "alert" : "", selected === p.property_id ? "selected" : ""].join(" ");
     const flag = alert ? `<span class="flag">${esc(alertLabel(alert))}</span>` : "";
     return L.divIcon({ className: "", html: `<span class="${cls}"><i></i>${flag}</span>`, iconSize: [16, 16], iconAnchor: [8, 8] });
   }
@@ -364,13 +388,15 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
   // ---------------------------------------------------------------- sidebar
   function renderStats() {
     const open = DATA.properties.filter((p) => p.is_open);
-    const newWeek = recentAlerts().filter((a) => a.kind === "new").length;
+    const newWeek = recentAlerts().filter((a) => a.kind === "new" || a.kind === "lis_pendens").length;
     const soon = open.filter((p) => { const d = parseDay(p.sale_date); return d && d >= NOW - 864e5 && d <= +NOW + 30 * 864e5; }).length;
     const debt = open.reduce((s, p) => s + (+(p.upset || p.judgment || 0)), 0);
     const reo = DATA.properties.filter(isReo).length;
+    const pre = DATA.properties.filter((p) => isPre(p) && p.lp_status === "pending").length;
     $("#stats").innerHTML = `
+      <div class="stat"><b style="color:var(--pin-pre)">${pre}</b><span>Pre-foreclosures</span></div>
       <div class="stat"><b>${open.length}</b><span>On sale lists</span></div>
-      <div class="stat"><b style="color:var(--pin-reo)">${reo}</b><span>Bank-owned (12 mo)</span></div>
+      <div class="stat"><b style="color:var(--pin-reo)">${reo}</b><span>Bank-owned since 2018</span></div>
       <div class="stat hot"><b>${newWeek}</b><span>New this week</span></div>
       <div class="stat"><b>${soon}</b><span>Sales in 30 days</span></div>
       <div class="stat"><b>${short$(debt)}</b><span>Upset total</span></div>`;
@@ -401,10 +427,17 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const setTab = (name) => {
       tab = name;
       $("#tab-alerts").setAttribute("aria-selected", name === "alerts");
+      $("#tab-reo").setAttribute("aria-selected", name === "reo");
       $("#tab-props").setAttribute("aria-selected", name === "props");
+      $("#list").scrollTop = 0;
       renderList();
     };
     $("#tab-alerts").onclick = () => setTab("alerts");
+    $("#tab-reo").onclick = () => setTab("reo");
+    $("#list").addEventListener("scroll", () => {
+      const l = $("#list");
+      if (l.scrollTop + l.clientHeight > l.scrollHeight - 400) moreRows();
+    });
     $("#tab-props").onclick = () => setTab("props");
     $("#panel-btn").onclick = () => $("#side").classList.toggle("collapsed");
   }
@@ -413,24 +446,110 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     return [p.muni || titleCase(p.city), p.county ? p.county + " Co." : ""].filter(Boolean).join(" · ");
   }
 
+  // Everything but the status chips: the timeline and bank-owned tabs have their own scope.
+  function visibleBase(p) {
+    const save = state.statuses; state.statuses = { has: () => true };
+    try { return visible(p); } finally { state.statuses = save; }
+  }
+
+  // A scrolling timeline: new sheriff listings, new lis pendens and every change, newest first.
+  function timelineEntries() {
+    const byId = new Map(DATA.properties.map((p) => [p.property_id, p]));
+    const out = [];
+    for (const p of DATA.properties) {
+      if (isReo(p) || !visibleBase(p)) continue;
+      if (isPre(p) && p.recorded) out.push({ date: p.recorded, kind: "lis_pendens", p });
+      else if (!isPre(p) && p.listed) out.push({ date: p.listed, kind: "listed", est: p.listed_estimated, p });
+    }
+    for (const a of DATA.alerts) {
+      const p = byId.get(a.property_id);
+      if (!p || isReo(p) || !visibleBase(p) || a.kind === "new" || a.kind === "lis_pendens" || a.kind === "reo") continue;
+      out.push({ date: String(a.ts).slice(0, 10), kind: a.kind, a, p });
+    }
+    return out.sort((x, y) => y.date.localeCompare(x.date) || (x.kind === "listed" ? -1 : 1));
+  }
+  function reoEntries() {
+    return DATA.properties.filter((p) => isReo(p) && visibleBase(p))
+      .sort((a, b) => String(b.outcome_date || "").localeCompare(String(a.outcome_date || "")));
+  }
+
+  const PAGE = 60;
+  let ROWS = [], SHOWN = 0, ROWFN = null;
+  function moreRows() {
+    if (SHOWN >= ROWS.length || !ROWFN) return;
+    const list = $("#list");
+    const next = ROWS.slice(SHOWN, SHOWN + PAGE);
+    list.insertAdjacentHTML("beforeend", next.map((r, i) => ROWFN(r, ROWS[SHOWN + i - 1])).join(""));
+    SHOWN += next.length;
+    list.querySelectorAll(".item:not([data-wired])").forEach((b) => { b.dataset.wired = "1"; b.onclick = () => select(b.dataset.id, true); });
+  }
+  const dayHead = (d) => `<div class="day">${esc(new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }))}</div>`;
+  const yearHead = (y) => `<div class="day">${esc(y)}</div>`;
+
+  function timelineRow(e, prev) {
+    const p = e.p;
+    const head = !prev || prev.date !== e.date ? dayHead(e.date) : "";
+    const unseen = LAST_VISIT && e.a && e.a.ts > LAST_VISIT;
+    let tag, line;
+    if (e.kind === "listed") {
+      tag = `<span class="tag" style="--t:var(--alert)">${e.est ? "On sheriff sale list" : "New sheriff sale"}</span>`;
+      line = `${e.est ? "First sale date " : "Sale "}${fmtDate(e.est ? e.date : p.sale_date)}${p.upset ? " · Upset " + short$(p.upset) : ""}${p.is_open ? "" : " · " + esc(p.latest_status || "Off the list")}`;
+    } else if (e.kind === "lis_pendens") {
+      tag = `<span class="tag" style="--t:var(--pin-pre)">Foreclosure filed</span>`;
+      line = `Lis pendens by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")}${p.mortgage_amount ? " · Mortgage " + short$(p.mortgage_amount) : ""}`;
+    } else {
+      const a = e.a;
+      const t = a.kind === "closed" ? "var(--pin-closed)" : "var(--pin-possible)";
+      tag = `<span class="tag" style="--t:${t}">${esc(alertLabel(a))}</span>`;
+      line = esc(alertText(a));
+    }
+    return `${head}<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
+          <div class="top">${unseen ? '<span class="unseen" title="New since your last visit"></span>' : ""}${tag}<span class="when">${e.est ? "est." : ""}</span></div>
+          <div class="addr">${esc(titleCase(p.street))}</div>
+          <div class="meta">${esc(placeLine(p))}${p.class_label ? " · " + esc(p.class_label) : ""}</div>
+          <div class="change">${line}</div>
+        </button>`;
+  }
+  function reoRow(p, prev) {
+    const y = String(p.outcome_date || "").slice(0, 4);
+    const head = !prev || String(prev.outcome_date || "").slice(0, 4) !== y ? yearHead(y || "Date unknown") : "";
+    const who = p.plaintiff ? titleCase(firstDefendant(p.plaintiff)) : "Lender (not named in state deed data)";
+    return `${head}<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
+          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(p.outcome_date)}</span></div>
+          <div class="meta">${esc(placeLine(p))} · ${esc(p.class_label || "")}${p.net_value ? " · Assessed " + short$(p.net_value) : ""}</div>
+          <div class="change">${esc(who)}${p.resale_date ? ` · <b>sold on ${fmtDate(p.resale_date)} for ${short$(p.resale_price)}</b>` : ""}</div>
+        </button>`;
+  }
+
   function renderList() {
     const byId = new Map(DATA.properties.map((p) => [p.property_id, p]));
     const alerts = recentAlerts().filter((a) => byId.has(a.property_id) && visible(byId.get(a.property_id)));
-    const order = { open: 0, reo: 1, off: 2 };
+    const order = { pre: 0, open: 1, reo: 2, off: 3 };
     const props = DATA.properties.filter(visible).sort((a, b) => {
       const ka = statusKey(a), kb = statusKey(b);
       if (ka !== kb) return order[ka] - order[kb];
       if (ka === "reo") return String(b.outcome_date || "").localeCompare(String(a.outcome_date || ""));
+      if (ka === "pre") return String(b.recorded || "").localeCompare(String(a.recorded || ""));
       return String(a.sale_date || "9").localeCompare(String(b.sale_date || "9"));
     });
-    $("#n-alerts").textContent = alerts.length;
+    const tl = timelineEntries(), reos = reoEntries();
+    $("#n-alerts").textContent = tl.length;
+    $("#n-reo").textContent = reos.length;
     $("#n-props").textContent = props.length;
     const list = $("#list");
-    if (tab === "alerts") {
+    if (tab === "alerts" || tab === "reo") {
+      ROWS = tab === "alerts" ? tl : reos;
+      ROWFN = tab === "alerts" ? timelineRow : reoRow;
+      SHOWN = 0;
+      list.innerHTML = ROWS.length ? "" : `<div class="empty">${tab === "alerts" ? "Nothing matches these filters." : "No bank-owned properties match these filters."}</div>`;
+      moreRows();
+      return;
+    }
+    if (false) {
       list.innerHTML = alerts.length ? alerts.map((a) => {
         const p = byId.get(a.property_id);
         const unseen = LAST_VISIT && a.ts > LAST_VISIT;
-        const t = a.kind === "reo" || alertLabel(a) === "Bought back by lender" ? "var(--pin-reo)" : a.kind === "closed" ? "var(--pin-closed)" : a.kind === "new" ? "var(--alert)" : "var(--pin-possible)";
+        const t = a.kind === "lis_pendens" ? "var(--pin-pre)" : a.kind === "reo" || alertLabel(a) === "Bought back by lender" ? "var(--pin-reo)" : a.kind === "closed" ? "var(--pin-closed)" : a.kind === "new" ? "var(--alert)" : "var(--pin-possible)";
         return `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
           <div class="top">${unseen ? '<span class="unseen" title="New since your last visit"></span>' : ""}<span class="tag" style="--t:${t}">${esc(alertLabel(a))}</span><span class="when">${ago(a.ts)}</span></div>
           <div class="addr">${esc(titleCase(p.street))}</div>
@@ -440,9 +559,9 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       }).join("") : `<div class="empty">No alerts in the last 7 days for the current filters. New listings, adjournments, sale-date and upset changes, and new bank-owned (REO) properties appear here and pulse on the map.</div>`;
     } else {
       list.innerHTML = props.length ? props.map((p) => `<button class="item" data-id="${p.property_id}" aria-current="${selected === p.property_id}">
-          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(isReo(p) ? p.outcome_date : p.sale_date)}</span></div>
-          <div class="meta">${isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">REO</span> ' : ""}${esc(placeLine(p))} · ${esc(p.class_label || "Needs review")}${p.is_open || isReo(p) ? "" : " · Off list"}</div>
-          <div class="meta">Upset ${short$(p.upset)}${p.net_value ? " · Assessed " + short$(p.net_value) : ""}${p.lat == null ? " · No map location" : ""}</div>
+          <div class="top"><span class="addr">${esc(titleCase(p.street))}</span><span class="when">${fmtDate(isPre(p) ? p.recorded : isReo(p) ? p.outcome_date : p.sale_date)}</span></div>
+          <div class="meta">${isPre(p) ? '<span class="tag" style="--t:var(--pin-pre)">Lis pendens</span> ' : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">REO</span> ' : ""}${esc(placeLine(p))} · ${esc(p.class_label || "Needs review")}${p.is_open || isReo(p) || isPre(p) ? "" : " · Off list"}</div>
+          <div class="meta">${isPre(p) ? `Mortgage ${short$(p.mortgage_amount)}` : `Upset ${short$(p.upset)}`}${p.net_value ? " · Assessed " + short$(p.net_value) : ""}${p.lat == null ? " · No map location" : ""}</div>
         </button>`).join("") : `<div class="empty">No properties match these filters.</div>`;
     }
     list.querySelectorAll(".item").forEach((b) => b.onclick = () => select(b.dataset.id, true));
@@ -458,7 +577,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       (errs.length ? `<br><span class="err">Could not read: ${esc(errs.join(", "))}</span>` : "") +
       (r.reo_baseline && r.reo_capped ? `<br>Bank-owned (REO) history is still loading; more appear after each daily scan.` : "") +
       (reoErrs.length ? `<br><span class="err">Past sales not read: ${esc(reoErrs.join(", "))}</span>` : "") +
-      `<br>Sources: county sheriff listings (CivilView), NJ MOD-IV tax data (NJOGIS). Verify before relying on figures.`;
+      `<br>Sources: county sheriff listings (CivilView), county clerk records (lis pendens, mortgages), NJ MOD-IV tax data (NJOGIS). Verify before relying on figures.`;
   }
 
   // ---------------------------------------------------------------- property file
@@ -483,18 +602,29 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         <button class="x" id="d-close" aria-label="Close">×</button>
         <h2>${esc(titleCase(p.street) || "Address not listed")}</h2>
         <div class="where">${esc(placeLine(p))}${bl ? " · <span class='mono'>" + esc(bl) + "</span>" : ""}</div>
-        <div class="tags">${catTag}${p.is_open ? "" : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">Bank-owned (REO)</span>' : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
+        <div class="tags">${catTag}${isPre(p) ? `<span class="tag" style="--t:var(--pin-pre)">${p.lp_status === "pending" ? "Pre-foreclosure" : "Lis pendens discharged"}</span>` : p.is_open ? "" : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">Bank-owned (REO)</span>' : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
       </div>
       <div class="d-body">
-        ${isReo(p) ? `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>${esc(titleCase(p.plaintiff) || "The foreclosing lender")} took the property back at the sheriff sale${p.outcome_status ? ` (“${esc(p.outcome_status)}”)` : ""}. The lender, its servicer or asset manager now controls the sale.</div></div>` : ""}
+        ${isReo(p) ? (p.stage === "reo_hist"
+          ? `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>The foreclosing lender took title by ${esc(p.reo_kind || "sheriff's sale")}${p.reo_price != null && p.reo_kind !== "deed in lieu" ? ` with a ${money(p.reo_price)} bid` : ""}. ${p.resale_date ? `<b style="text-transform:none;letter-spacing:0">The lender sold it on ${fmtDate(p.resale_date)} for ${money(p.resale_price)}.</b>` : "No resale by the lender appears in the state's deed records yet, so it may still be bank-owned."}</div><div class="note">Source: NJ deed records (SR-1A). The state blanks names, so the lender isn't named here; the record history below shows it where the county's records are online.</div></div>`
+          : `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>${esc(titleCase(p.plaintiff) || "The foreclosing lender")} took the property back at the sheriff sale${p.outcome_status ? ` (“${esc(p.outcome_status)}”)` : ""}. The lender, its servicer or asset manager now controls the sale.</div></div>`) : ""}
+        ${stageTracker(p)}
         ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
+        ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : "Lis pendens discharged"} · lis pendens recorded ${fmtDate(p.recorded)}</b><div>${esc(titleCase(firstDefendant(p.plaintiff)) || "The lender")} has started foreclosure${p.complaint_filed ? ` (complaint filed ${fmtDate(p.complaint_filed)})` : ""}. Not yet on a sheriff's sale list.</div></div>` : ""}
         <div class="figs">
-          <div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>
-          <div class="fig"><span>Judgment</span><b>${short$(p.judgment)}</b></div>
+          ${isPre(p) ? `<div class="fig"><span>Mortgage</span><b>${short$(p.mortgage_amount)}</b></div><div class="fig"><span>Mortgage date</span><b>${p.mortgage_date ? fmtDate(p.mortgage_date) : "—"}</b></div>` : `<div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>`}
+          ${isPre(p) ? "" : `<div class="fig"><span>Judgment</span><b>${short$(p.judgment)}</b></div>`}
           <div class="fig"><span>${p.net_value_total ? `Assessed · ${p.lots.length} lots` : "Assessed"}</span><b>${short$(assessed)}</b></div>
         </div>
         ${ratio != null ? `<div class="meter"><div>Debt is <b>${ratio}%</b> of assessed value</div><div class="bar"><i style="width:${Math.min(ratio, 100)}%;--fill:${ratio >= 90 ? "var(--alert)" : ratio >= 70 ? "var(--pin-possible)" : "var(--ok)"}"></i></div></div>` : ""}
-        <div class="sec"><h3>Sheriff sale</h3><dl class="kv">
+        ${isPre(p) ? `<div class="sec"><h3>Foreclosure filing</h3><dl class="kv">
+          <dt>Lis pendens</dt><dd>${fmtDate(p.recorded)} · <span class="mono">Inst. ${esc(p.instrument)}</span>${copyBtn(p.instrument)}</dd>
+          ${p.docket ? `<dt>Docket</dt><dd class="mono">${esc(p.docket)}</dd>` : ""}
+          ${p.complaint_filed ? `<dt>Complaint filed</dt><dd>${fmtDate(p.complaint_filed)}</dd>` : ""}
+          ${p.mortgage_ref ? `<dt>Mortgage</dt><dd>${short$(p.mortgage_amount)}${p.mortgage_date ? " · " + fmtDate(p.mortgage_date) : ""}<div class="note">${esc(p.mortgage_ref)}</div></dd>` : ""}
+          ${p.attorney_firm || p.attorney ? `<dt>Lender's attorney</dt><dd><b>${esc(p.attorney || "")}</b>${p.attorney_firm ? `<div>${esc(titleCase(p.attorney_firm))}</div>` : ""}${p.attorney_phone ? `<div class="mono">${esc(p.attorney_phone)}${copyBtn(p.attorney_phone)}</div>` : ""}${p.attorney_email ? `<div class="mono">${esc(p.attorney_email)}${copyBtn(p.attorney_email)}</div>` : ""}</dd>` : ""}
+        </dl></div>` : ""}
+        <div class="sec"${isPre(p) ? " hidden" : ""}><h3>Sheriff sale</h3><dl class="kv">
           <dt>Sale date</dt><dd>${fmtDate(isReo(p) ? p.outcome_date || p.sale_date : p.sale_date)}${isReo(p) ? "" : when}</dd>
           <dt>Status</dt><dd>${esc(p.latest_status || "—")}</dd>
           <dt>Docket</dt><dd><span class="mono">${esc(p.court_case || "—")}</span>${p.court_case ? copyBtn(p.court_case) : ""}</dd>
@@ -520,10 +650,11 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
           ${p.last_sale_price ? `<dt>Last sale</dt><dd>${money(p.last_sale_price)} · ${fmtDate(p.last_sale_date)}</dd>` : ""}
           ${p.last_yr_tax ? `<dt>Annual taxes</dt><dd>${money(p.last_yr_tax)}</dd>` : ""}
         </dl>` : `<p class="note">${esc(p.category_reason || "Not matched to a tax record.")}</p>`}</div>
+        <div class="sec" id="records-sec"><h3>Public record history</h3><p class="note">Loading…</p></div>
         <div class="sec"><h3>Status history</h3><ol class="timeline">${hist.map((h) => `<li><span>${esc(h[0])}</span><time>${fmtDate(h[1])}</time></li>`).join("") || "<li>None posted</li>"}</ol></div>
         ${p.description ? `<details><summary>Legal description</summary><p>${esc(p.description)}</p></details>` : ""}
         <div class="links">
-          <a href="${esc(p.detail_url)}" target="_blank" rel="noopener">Sheriff listing</a>
+          ${p.detail_url ? `<a href="${esc(p.detail_url)}" target="_blank" rel="noopener">${isPre(p) ? "County clerk records" : "Sheriff listing"}</a>` : ""}
           <a href="https://www.google.com/maps/search/?api=1&query=${ll}" target="_blank" rel="noopener">Google Maps</a>
           ${p.lat != null ? `<a href="https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${p.lat},${p.lon}" target="_blank" rel="noopener">Street View</a>` : ""}
         </div>
@@ -531,12 +662,66 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       </div>`;
     $("#d-close").onclick = closeDetail;
     $("#enrich-btn").onclick = () => showContacts(p);
+    showRecords(p);
     $("#detail").querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => {
       const txt = b.dataset.copy;
       Promise.resolve().then(() => navigator.clipboard.writeText(txt)).then(() => { b.textContent = "Copied"; }, () => {
         const r = document.createRange(); r.selectNodeContents(b.previousElementSibling || b); getSelection().removeAllRanges(); getSelection().addRange(r);
       });
     });
+  }
+
+  // ---- Foreclosure stage --------------------------------------------------
+  // Where the property is in the foreclosure process, from the filing to the outcome.
+  function stageTracker(p) {
+    const hist = p.status_history || [];
+    const adj = hist.filter((h) => /adjourn/i.test(h[0])).length;
+    const bk = hist.some((h) => /bankrupt/i.test(h[0]));
+    const lp = isPre(p) ? p.recorded : (p.lp_recorded || null);
+    const outcome = isReo(p) ? `Bank-owned (REO)` : p.is_open ? null :
+      isPre(p) ? (p.lp_status === "discharged" ? "Lis pendens discharged" : null) :
+      /sold|purchas/i.test(p.latest_status || "") ? "Sold at sheriff sale" : /cancel|withdr|vacat|dismiss/i.test(p.latest_status || "") ? "Cancelled / withdrawn" : "Off the sale list";
+    const steps = [
+      { label: "Foreclosure filed", sub: lp ? `Lis pendens ${fmtDate(lp)}` : (isPre(p) ? "" : "Before sheriff list"), done: !!lp || !isPre(p) },
+      { label: "Sheriff sale list", sub: isPre(p) ? "Not yet" : p.listed ? `${p.listed_estimated ? "By " : ""}${fmtDate(p.listed)}` : "", done: !isPre(p) },
+      { label: "Sale date", sub: isPre(p) ? "" : p.sale_date ? `${fmtDate(isReo(p) ? p.outcome_date : p.sale_date)}${adj ? ` · ${adj} adjournment${adj > 1 ? "s" : ""}` : ""}${bk ? " · bankruptcy" : ""}` : "", done: !isPre(p) && !!(p.sale_date || isReo(p)) },
+      { label: "Outcome", sub: outcome || "Pending", done: !!outcome },
+    ];
+    const cur = steps.findIndex((x) => !x.done);
+    return `<ol class="stages">${steps.map((x, i) => `<li class="${x.done ? "done" : ""}${i === (cur === -1 ? steps.length - 1 : cur) ? " now" : ""}"><b>${esc(x.label)}</b><span>${esc(x.sub || "")}</span></li>`).join("")}</ol>`;
+  }
+
+  // ---- Public record history ------------------------------------------------
+  let RECORDS = null;
+  async function loadRecords() {
+    if (RECORDS) return RECORDS;
+    if (DATA.sample) return (RECORDS = {});
+    try { RECORDS = await (await fetch("data/records.json", { cache: "no-cache" })).json(); } catch { RECORDS = {}; }
+    return RECORDS;
+  }
+  const RECORD_COUNTIES = ["Essex", "Passaic"];
+  const kindColor = (k) => /lis pendens|foreclos|sheriff/i.test(k) ? "var(--alert)" : /mortgage|assignment/i.test(k) ? "var(--pin)" :
+    /deed/i.test(k) ? "var(--ok)" : /settlement/i.test(k) ? "var(--pin-pre)" : /tax|lien|judgment/i.test(k) ? "var(--pin-reo)" : "var(--ink-3)";
+  async function showRecords(p) {
+    const sec = $("#records-sec");
+    if (!sec) return;
+    const all = await loadRecords();
+    if (selected !== p.property_id) return;
+    const r = all[p.property_id];
+    if (!r || !r.filings) {
+      sec.innerHTML = `<h3>Public record history</h3><p class="note">${RECORD_COUNTIES.includes(p.county)
+        ? "Not researched yet. Recorded documents are read overnight; check back after the next daily update."
+        : `${esc(p.county || "This")} County's recorded documents aren't connected yet (see the coverage checklist).`}</p>`;
+      return;
+    }
+    const f = r.filings;
+    const row = (x) => `<li><span class="rk" style="--t:${kindColor(x.kind)}">${esc(x.kind)}</span><time>${fmtDate(x.recorded)}</time>
+        <div class="rp">${esc((x.from || []).slice(0, 2).map(titleCase).join("; ") || "—")} <span class="arrow">→</span> ${esc((x.to || []).slice(0, 2).map(titleCase).join("; ") || "—")}</div>
+        <div class="note mono">Inst. ${esc(x.instrument)}${x.block ? ` · Block ${esc(x.block)}${x.lot ? " Lot " + esc(x.lot) : ""}` : ""}</div></li>`;
+    sec.innerHTML = `<h3>Public record history <span class="count">${f.length}</span></h3>
+      <ol class="records">${f.slice(0, 12).map(row).join("")}</ol>
+      ${f.length > 12 ? `<details><summary>Show all ${f.length}</summary><ol class="records">${f.slice(12).map(row).join("")}</ol></details>` : ""}
+      <p class="note">From the ${esc(p.county)} County clerk's index (deeds, mortgages, assignments, easements, liens, lis pendens and more) · read ${ago(r.generated_at)}.</p>`;
   }
 
   // ---- Contact enrichment -------------------------------------------------

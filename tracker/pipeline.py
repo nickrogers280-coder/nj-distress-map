@@ -256,8 +256,10 @@ def diff_and_log(db: DB, ts: str, old: dict, new: dict) -> int:
         before = _history(old.get("status_history"))
         after = _history(new["status_history"])
         added = after[len(before):] if after[:len(before)] == before else [e for e in after if e not in before]
-        for e in added:
-            db.add_event(pid, ts, "status", _fmt_status(before[-1]) if before else None, _fmt_status(e))
+        # A history seen for the first time is the listing's past, not news; and several entries
+        # posted between two scans are one change, reported as the latest.
+        if added and before:
+            db.add_event(pid, ts, "status", _fmt_status(before[-1]), _fmt_status(added[-1]))
             n += 1
     for key in ("upset", "judgment"):
         if key in new and new[key] is not None and old.get(key) is not None and abs(new[key] - old[key]) >= 1:

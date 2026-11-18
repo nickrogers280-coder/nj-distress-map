@@ -284,7 +284,7 @@ def test_scripts_have_no_undefined_names():
     import builtins
     from pathlib import Path
     root = Path(__file__).parent.parent
-    for script in ("run.py", "enrich_contacts.py"):
+    for script in ("run.py", "enrich_contacts.py", "preforeclosures.py"):
         tree = ast.parse((root / script).read_text())
         defined = set(dir(builtins))
         for node in ast.walk(tree):
@@ -305,3 +305,16 @@ def test_scripts_have_no_undefined_names():
                         defined.add(n.id)
         used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
         assert not (used - defined - {"__file__", "__name__"}), (script, used - defined)
+
+
+def test_first_history_is_not_news_and_bursts_are_one_alert(tmp_path):
+    db = DB(tmp_path / "t.db")
+    old = {"property_id": "15:X", "status_history": "[]"}
+    n = pipeline.diff_and_log(db, "2026-11-17T12:00:00+00:00", old, {"status_history": json.dumps(
+        [["Scheduled", "2026-08-12"], ["Plaintiff Adjournment", "2026-10-07"], ["Defendant Adjournment", "2026-12-02"]])})
+    assert n == 0
+    old = {"property_id": "15:X", "status_history": json.dumps([["Scheduled", "2026-08-12"]])}
+    n = pipeline.diff_and_log(db, "2026-11-18T12:00:00+00:00", old, {"status_history": json.dumps(
+        [["Scheduled", "2026-08-12"], ["Plaintiff Adjournment", "2026-10-07"], ["Defendant Adjournment", "2026-12-02"]])})
+    rows = db.conn.execute("SELECT old_value, new_value FROM events WHERE kind='status'").fetchall()
+    assert n == 1 and [tuple(r) for r in rows] == [("Scheduled (2026-08-12)", "Defendant Adjournment (2026-12-02)")]
