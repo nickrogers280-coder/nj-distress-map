@@ -139,15 +139,24 @@ def classify_sale(s: Sale) -> str | None:
         return "reo"
     if NU_SHERIFF in codes and s.price <= NOMINAL_PRICE:
         return "reo"
+    if NU_SHERIFF in codes:
+        return "sold"          # an outside bidder bought it at the sheriff's sale
     if NU_REO_RESALE in codes:
         return "reo_resale"
     return None
 
 
 def reo_events(sales, since: str = "2018-01-01") -> list[dict]:
-    """Collapse a stream of sales into one record per lender take-back of a tracked parcel, with
-    the lender's later resale attached when the files show it."""
+    """Lender take-backs only (see history_events)."""
+    return [e for e in history_events(sales, since) if e["outcome"] == "reo"]
+
+
+def history_events(sales, since: str = "2018-01-01") -> list[dict]:
+    """Collapse a stream of sales into one record per lender take-back of a tracked parcel (with
+    the lender's later resale attached when the files show it), plus one per parcel an outside
+    bidder bought at a sheriff's sale. Newest first."""
     takes: dict[str, dict] = {}
+    sold: dict[str, dict] = {}
     resales: dict[str, list[Sale]] = {}
     for s in sales:
         if s.prop_class not in TRACKED_CLASSES or not s.deed_date or s.deed_date < since:
@@ -160,7 +169,15 @@ def reo_events(sales, since: str = "2018-01-01") -> list[dict]:
                                 "lot": s.lot, "prop_class": s.prop_class, "reo_date": s.deed_date,
                                 "reo_price": s.price, "reo_kind": "deed in lieu" if NU_IN_LIEU in (s.nu, s.assessor_nu)
                                 else "sheriff's sale", "location": s.location, "assessed": s.assessed,
-                                "recorded": s.recorded}
+                                "recorded": s.recorded, "outcome": "reo"}
+        elif kind == "sold":
+            cur = sold.get(s.pin)
+            if cur is None or s.deed_date > cur["reo_date"]:
+                sold[s.pin] = {"pin": s.pin, "county": s.county, "district": s.district, "block": s.block,
+                               "lot": s.lot, "prop_class": s.prop_class, "reo_date": s.deed_date,
+                               "reo_price": s.price, "reo_kind": "sheriff's sale to a third party",
+                               "location": s.location, "assessed": s.assessed, "recorded": s.recorded,
+                               "outcome": "sold"}
         elif kind == "reo_resale":
             resales.setdefault(s.pin, []).append(s)
     for pin, t in takes.items():
@@ -168,7 +185,7 @@ def reo_events(sales, since: str = "2018-01-01") -> list[dict]:
                        key=lambda r: r.deed_date)
         if later:
             t["resale_date"], t["resale_price"] = later[0].deed_date, later[0].price
-    return sorted(takes.values(), key=lambda t: t["reo_date"], reverse=True)
+    return sorted([*takes.values(), *sold.values()], key=lambda t: t["reo_date"], reverse=True)
 
 
 def download_years(years: list[int], session=None, include_ytd: bool = True) -> dict[int, bytes]:

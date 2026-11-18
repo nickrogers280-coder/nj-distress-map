@@ -101,3 +101,11 @@ def test_reo_history_run_and_map(tmp_path):
     # Next run only re-reads the latest two years.
     reo_history.run({}, db, Parcels(), today=date(2026, 11, 18), fetch=fetch)
     assert asked[-1] == [2025, 2026]
+
+
+def test_history_events_keep_third_party_sheriff_sales():
+    sales = [sr1a.parse_line(x) for x in [line(), line(block="00376", lot="00015", price=640_000)]]
+    ev = sr1a.history_events(sales)
+    sold = next(e for e in ev if e["outcome"] == "sold")
+    assert sold["pin"] == "0714_376_15" and sold["reo_price"] == 640_000
+    assert {e["outcome"] for e in ev} == {"reo", "sold"}

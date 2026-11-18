@@ -69,7 +69,8 @@ REO_FIELDS = ["property_id", "pams_pin", "county", "muni", "street", "block", "l
 
 
 def reo_history_props(db: DB, have_pins: set) -> list[dict]:
-    """Bank-owned properties since 2018 from the state's deed files, minus ones already on the map."""
+    """Past sheriff's sale outcomes from the state's deed files (bank take-backs and third-party
+    sales), minus parcels already on the map."""
     try:
         rows = db.conn.execute(
             """SELECT * FROM reo_history WHERE located = 1 AND category IN ('target','land')
@@ -82,6 +83,15 @@ def reo_history_props(db: DB, have_pins: set) -> list[dict]:
         if r["pams_pin"] in have_pins:
             continue
         p = {k: r.get(k) for k in REO_FIELDS}
+        if r.get("outcome") == "sold":
+            p.update({"stage": "sale_hist", "is_open": 0, "outcome": "sold", "outcome_date": r["reo_date"],
+                      "sale_date": r["reo_date"], "sold_price": r["reo_price"],
+                      "latest_status": "Sold at sheriff's sale",
+                      "outcome_status": "Sold at sheriff's sale to a third party",
+                      "status_history": [], "source": "NJ deed records (SR-1A)", "detail_url": None,
+                      "city": r.get("muni"), "plaintiff": None, "defendant": None, "enriched": False})
+            out.append(p)
+            continue
         p.update({"stage": "reo_hist", "is_open": 0, "outcome": "reo", "outcome_date": r["reo_date"],
                   "outcome_status": f"Lender took title ({r['reo_kind']})", "status_history": [],
                   "source": "NJ deed records (SR-1A)", "detail_url": None, "city": r.get("muni"),

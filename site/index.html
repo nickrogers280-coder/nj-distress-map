@@ -392,11 +392,12 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const soon = open.filter((p) => { const d = parseDay(p.sale_date); return d && d >= NOW - 864e5 && d <= +NOW + 30 * 864e5; }).length;
     const debt = open.reduce((s, p) => s + (+(p.upset || p.judgment || 0)), 0);
     const reo = DATA.properties.filter(isReo).length;
+    const reoSince = DATA.properties.filter(isReo).map((p) => String(p.outcome_date || "").slice(0, 4)).filter(Boolean).sort()[0] || "2020";
     const pre = DATA.properties.filter((p) => isPre(p) && p.lp_status === "pending").length;
     $("#stats").innerHTML = `
       <div class="stat"><b style="color:var(--pin-pre)">${pre}</b><span>Pre-foreclosures</span></div>
       <div class="stat"><b>${open.length}</b><span>On sale lists</span></div>
-      <div class="stat"><b style="color:var(--pin-reo)">${reo}</b><span>Bank-owned since 2018</span></div>
+      <div class="stat"><b style="color:var(--pin-reo)">${reo}</b><span>Bank-owned since ${reoSince}</span></div>
       <div class="stat hot"><b>${newWeek}</b><span>New this week</span></div>
       <div class="stat"><b>${soon}</b><span>Sales in 30 days</span></div>
       <div class="stat"><b>${short$(debt)}</b><span>Upset total</span></div>`;
@@ -458,6 +459,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const out = [];
     for (const p of DATA.properties) {
       if (isReo(p) || !visibleBase(p)) continue;
+      if (p.stage === "sale_hist") { if (p.outcome_date) out.push({ date: p.outcome_date, kind: "sold_hist", p }); continue; }
       if (isPre(p) && p.recorded) out.push({ date: p.recorded, kind: "lis_pendens", p });
       else if (!isPre(p) && p.listed) out.push({ date: p.listed, kind: "listed", est: p.listed_estimated, p });
     }
@@ -494,6 +496,9 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     if (e.kind === "listed") {
       tag = `<span class="tag" style="--t:var(--alert)">${e.est ? "On sheriff sale list" : "New sheriff sale"}</span>`;
       line = `${e.est ? "First sale date " : "Sale "}${fmtDate(e.est ? e.date : p.sale_date)}${p.upset ? " · Upset " + short$(p.upset) : ""}${p.is_open ? "" : " · " + esc(p.latest_status || "Off the list")}`;
+    } else if (e.kind === "sold_hist") {
+      tag = `<span class="tag" style="--t:var(--pin-closed)">Sold at sheriff sale</span>`;
+      line = `Outside buyer${p.sold_price ? " paid " + short$(p.sold_price) : ""}${p.net_value ? " · Assessed " + short$(p.net_value) : ""} · from state deed records`;
     } else if (e.kind === "lis_pendens") {
       tag = `<span class="tag" style="--t:var(--pin-pre)">Foreclosure filed</span>`;
       line = `Lis pendens by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")}${p.mortgage_amount ? " · Mortgage " + short$(p.mortgage_amount) : ""}`;
@@ -608,6 +613,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         ${isReo(p) ? (p.stage === "reo_hist"
           ? `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>The foreclosing lender took title by ${esc(p.reo_kind || "sheriff's sale")}${p.reo_price != null && p.reo_kind !== "deed in lieu" ? ` with a ${money(p.reo_price)} bid` : ""}. ${p.resale_date ? `<b style="text-transform:none;letter-spacing:0">The lender sold it on ${fmtDate(p.resale_date)} for ${money(p.resale_price)}.</b>` : "No resale by the lender appears in the state's deed records yet, so it may still be bank-owned."}</div><div class="note">Source: NJ deed records (SR-1A). The state blanks names, so the lender isn't named here; the record history below shows it where the county's records are online.</div></div>`
           : `<div class="reo-box"><b>Bank-owned since ${fmtDate(p.outcome_date)}</b><div>${esc(titleCase(p.plaintiff) || "The foreclosing lender")} took the property back at the sheriff sale${p.outcome_status ? ` (“${esc(p.outcome_status)}”)` : ""}. The lender, its servicer or asset manager now controls the sale.</div></div>`) : ""}
+        ${p.stage === "sale_hist" ? `<div class="reo-box"><b>Sold at sheriff sale ${fmtDate(p.outcome_date)}</b><div>An outside bidder bought it at the sheriff's sale${p.sold_price ? ` for ${money(p.sold_price)}` : ""}${p.net_value ? `, against a current assessment of ${money(p.net_value)}` : ""}. The buyer may be a note buyer, investor or developer worth knowing.</div><div class="note">Source: NJ deed records (SR-1A). The state blanks names; the record history below names the buyer where the county's records are online.</div></div>` : ""}
         ${stageTracker(p)}
         ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
         ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : "Lis pendens discharged"} · lis pendens recorded ${fmtDate(p.recorded)}</b><div>${esc(titleCase(firstDefendant(p.plaintiff)) || "The lender")} has started foreclosure${p.complaint_filed ? ` (complaint filed ${fmtDate(p.complaint_filed)})` : ""}. Not yet on a sheriff's sale list.</div></div>` : ""}
