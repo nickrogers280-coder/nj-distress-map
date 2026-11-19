@@ -20,9 +20,12 @@ from .press import BROWSER_UA, PRESS_COUNTY_NAMES, PRESS_SITES, PressClient, ocr
 
 log = logging.getLogger(__name__)
 
-LP_FORECLOSURE = re.compile(r"LIS PENDENS.*FORECLOS", re.I)
-LP_IN_REM = re.compile(r"LIS PENDENS.*IN REM", re.I)        # municipal tax-lien foreclosure
-LP_DISCHARGE = re.compile(r"LIS PENDENS.*DISCHARGE", re.I)
+# Document-type names differ by county: Essex "LIS PENDENS FORECLOSURE", Monmouth "FORECLOSURE
+# LISPENDENS", Burlington just "LIS PENDENS" (then the document itself has to say foreclosure).
+LP_FORECLOSURE = re.compile(r"LIS ?PENDENS.*FORECLOS|FORECLOS\w*\W+LIS ?PENDENS", re.I)
+LP_PLAIN = re.compile(r"^\s*LIS ?PENDENS\s*$", re.I)
+LP_IN_REM = re.compile(r"LIS ?PENDENS.*IN REM|\bLIS IN REM\b", re.I)        # municipal tax-lien foreclosure
+LP_DISCHARGE = re.compile(r"LIS ?PENDENS.*(DISCHARGE|RELEASE)|DISCHARGE\W*LIS ?PENDENS", re.I)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lis_pendens (
@@ -39,7 +42,7 @@ CREATE TABLE IF NOT EXISTS lis_pendens (
     category TEXT, category_reason TEXT, lat REAL, lon REAL, geo_source TEXT,
     mortgage_amount REAL, mortgage_date TEXT, mortgage_ref TEXT, complaint_filed TEXT, docket TEXT,
     attorney TEXT, attorney_phone TEXT, attorney_email TEXT, attorney_firm TEXT, attorney_address TEXT,
-    pages_read INTEGER, ocr_ok INTEGER
+    pages_read INTEGER, ocr_ok INTEGER, stated_block TEXT, stated_lot TEXT
 );
 CREATE TABLE IF NOT EXISTS lp_scan (county_id INTEGER PRIMARY KEY, checked_through TEXT);
 """
@@ -162,6 +165,10 @@ def parse_lis_pendens(text: str) -> dict:
 
 def ensure_tables(db: DB) -> None:
     db.conn.executescript(SCHEMA)
+    have = {r[1] for r in db.conn.execute("PRAGMA table_info(lis_pendens)")}
+    for col in ("stated_block", "stated_lot"):
+        if col not in have:
+            db.conn.execute(f"ALTER TABLE lis_pendens ADD COLUMN {col} TEXT")
     db.commit()
 
 
@@ -234,6 +241,12 @@ def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, ci
             if png:
                 texts.append(ocr_png(png))
     rec["pages_read"] = len(texts)
+    if not (LP_FORECLOSURE.search(g["doc_type"]) or LP_IN_REM.search(g["doc_type"])):
+        joined = "\n".join(texts)
+        if texts and not re.search(r"FORECLOS|MORTGAGE", joined, re.I):
+            rec["kind"] = "other"          # a lis pendens over something else (a contract, a lien, a partition)
+        elif re.search(r"\bIN REM\b|TAX SALE CERTIFICATE", joined, re.I):
+            rec["kind"] = "in_rem"
     info = parse_lis_pendens("\n".join(texts)) if texts else {}
     rec["ocr_ok"] = int(bool(info.get("block") or info.get("street")))
     for k in ("street", "city", "zip", "block", "lot", "qual", "description", "mortgage_amount", "mortgage_date",
@@ -256,6 +269,8 @@ def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, ci
     else:
         rec["match_method"] = "unmatched"
     rec["category"], rec["category_reason"] = classify(rec, cfg)
+    if rec["kind"] == "other":
+        rec["category"], rec["category_reason"] = "other", "Lis pendens that isn't a foreclosure"
     if rec["category"] in ("target", "land"):
         locate(rec, parcels, geocoder)
     return rec
@@ -307,7 +322,7 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
     ensure_tables(db)
     today = today or datetime.now(timezone.utc).date()
     lookback = int(cfg.get("lis_pendens_lookback_days", 270))
-    cap = int(cfg.get("max_lis_pendens_per_run", 80))
+    cap = int(cfg.get("max_lis_pendens_per_county", cfg.get("max_lis_pendens_per_run", 40)))
     overlap = 5                                     # clerks index documents a few days after recording
     stats = {"found": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {}, "capped": False}
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -321,7 +336,9 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
         try:
             ctx = browser.new_context(user_agent=BROWSER_UA, viewport={"width": 1400, "height": 1000})
             client = PressClient(base, ctx.new_page())
-            rows = index_rows(client, LP_FORECLOSURE, start, today)
+            types = client.doc_types()
+            fore = LP_FORECLOSURE if any(LP_FORECLOSURE.search(t) for t in types) else LP_PLAIN
+            rows = index_rows(client, fore, start, today)
             rows += index_rows(client, LP_IN_REM, start, today)
             stats["discharged"] += apply_discharges(db, index_rows(client, LP_DISCHARGE, start, today))
         except Exception as e:  # noqa: BLE001
@@ -334,8 +351,9 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
         todo = [g for g in groups.values() if g["instrument"] not in known]
         todo.sort(key=lambda g: g["recorded"] or "", reverse=True)        # newest first
         done_all = True
+        county_done = 0
         for g in todo:
-            if stats["processed"] >= cap:
+            if county_done >= cap:
                 stats["capped"], done_all = True, False
                 break
             try:
@@ -347,6 +365,7 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
             rec.update({"first_seen": ts, "baseline": int(baseline)})
             save(db, rec)
             stats["processed"] += 1
+            county_done += 1
             if rec["category"] in ("target", "land"):
                 stats["tracked"] += 1
                 db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=baseline)

@@ -105,6 +105,62 @@ def parse_block_lot(*texts: str | None) -> tuple[str | None, str | None, str | N
     return block, lot, qual
 
 
+def _good_matches(regex: re.Pattern, text: str) -> list[tuple[int, str]]:
+    out = []
+    for m in regex.finditer(text):
+        before = text[max(0, m.start() - 18):m.start()].upper()
+        after = text[m.end():m.end() + 8].upper()
+        if "DIMENSION" in before or "SIZE OF" in before or "F/K/A" in before[-6:] or "FKA" in before[-5:]:
+            continue
+        if re.match(r"\s*(X\b|'|FT\b|FEET\b|FOOT\b)", after):
+            continue
+        out.append((m.start(), m.group(1).upper()))
+    return out
+
+
+def block_lot_pairs(text: str | None) -> list[tuple[int, str, str]]:
+    """Every (position, block, lot) a notice names, pairing each block with the nearest lot."""
+    if not text:
+        return []
+    blocks, lots = _good_matches(_BLOCK_RE, text), _good_matches(_LOT_RE, text)
+    out = []
+    for pos, b in blocks:
+        near = [(abs(lp - pos), l) for lp, l in lots if abs(lp - pos) <= 120]
+        if near:
+            out.append((pos, b, min(near)[1]))
+    return out
+
+
+def stated_block_lot(street: str | None, *texts: str | None) -> tuple[str | None, str | None, str | None]:
+    """The block/lot the filing gives for this property. A notice that sells several properties
+    names several; take the one written next to this property's own street address."""
+    block, lot, qual = parse_block_lot(*texts)
+    house = re.match(r"\s*(\d+)", street or "")
+    word = re.sub(r"^\s*[\d\-A-Z]*\d[\d\-A-Z]*\s+", "", (street or "").upper()).split(" ")[0] if street else ""
+    for text in texts:
+        pairs = block_lot_pairs(text)
+        if len({(b, l) for _, b, l in pairs}) <= 1 or not house:
+            continue
+        up = text.upper()
+        hits = [m.start() for m in re.finditer(rf"\b{house.group(1)}\s+{re.escape(word[:5])}" if word else rf"\b{house.group(1)}\b", up)]
+        if not hits:
+            continue
+        after = [(pos - hits[0], b, l) for pos, b, l in pairs if pos >= hits[0]]
+        if after:
+            _, b, l = min(after)
+            return b, l, qual
+    return block, lot, qual
+
+
+def lot_named(lot: str | None, *texts: str | None) -> bool:
+    """True when a text names this lot number in a lot list ('Lots 7.01 & 8', 'Tax lot 7.01 X Lot 8')."""
+    if not lot:
+        return False
+    num = re.escape(str(lot).upper().removesuffix(".00").removesuffix(".0"))
+    pat = re.compile(rf"\bLOTS?\b[^;:]{{0,40}}?(?<![\d.]){num}(?:\.0+)?(?![\d.]*\d)|(?<![\d.]){num}(?:\.0+)?\s+(?:X|&|AND)\s+LOTS?\b", re.I)
+    return any(t and pat.search(t) for t in texts)
+
+
 _LOT_SEG_RE = re.compile(
     r"\bLOT(?:\(S\)|S)?\b\.?\s*(?:NOS?\.?|NUMBERS?|#)?\s*:?\s*"
     r"(.{1,90}?)(?=\bTAX\s+BLOCK|\bBLOCKS?\b|\bIN\s+BLOCK|;|\bTAX\s+MAP|\bDIMENSION|\bQUAL|\bF/?K/?A\b|\bCITY\b|\bTOWN|\bBOROUGH|$)",

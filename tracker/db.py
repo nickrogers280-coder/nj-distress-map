@@ -128,7 +128,7 @@ LISTING_COLUMNS = [
     "class_label", "prop_loc", "net_value", "land_val", "imprvt_val", "last_yr_tax",
     "bldg_desc", "land_desc", "calc_acre", "yr_constr", "last_sale_price", "last_sale_date",
     "match_method", "lat", "lon", "geo_source", "outcome", "outcome_date", "outcome_status", "category", "category_reason", "is_open", "first_seen", "last_seen",
-    "last_detail_at", "closed_at",
+    "last_detail_at", "closed_at", "stated_block", "stated_lot",
 ]
 
 

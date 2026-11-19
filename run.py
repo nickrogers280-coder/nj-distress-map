@@ -89,6 +89,11 @@ def main(argv=None) -> int:
         db.commit()
     log.info("Reclassified: %s", pipeline.reclassify_all(db, cfg))
     stats = pipeline.run(cfg, cv, parcels, db, ts=started, geocoder=geocoder)
+    try:
+        stats["parcel_check"] = pipeline.verify_parcels(cfg, parcels, db, geocoder)
+        log.info("Parcel check: %s", stats["parcel_check"])
+    except Exception as e:  # noqa: BLE001
+        log.exception("Parcel check failed: %s", e)
     if cfg.get("reo_enabled", True) and not args.no_reo:
         stats.update(pipeline.run_reo(cfg, cv, parcels, db, ts=started, geocoder=geocoder))
         try:

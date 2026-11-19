@@ -119,6 +119,12 @@ class PressClient:
                                   F + "ddlTotalRecTab2": "750"}, F + "btnSearchTab2")
         return rows
 
+    def doc_types(self) -> list[str]:
+        self.page.goto(self.base + "ClerkHome.aspx?op=basic", wait_until="domcontentloaded", timeout=60000)
+        time.sleep(self.delay)
+        return self.page.evaluate("""() => [...(document.querySelector('[name$="ddlDocTypeTab2"]')?.options || [])]
+                                     .map(o => o.text.trim())""")
+
     def search_block_lot(self, muni: str, block: str, lot: str | None) -> list[IndexRow] | None:
         """Everything indexed against a block (and lot) in one town: the parcel's full record history."""
         self.page.goto(self.base + "ClerkHome.aspx?op=basic", wait_until="domcontentloaded", timeout=60000)

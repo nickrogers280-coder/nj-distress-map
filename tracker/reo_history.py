@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from .db import DB
 from .parcels import ParcelClient, ParcelMatch
-from .sr1a import download_years, history_events, iter_sales
+from .sr1a import TRACKED_CLASSES, classify_sale, download_years, history_events, iter_sales
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS reo_history (
     last_sale_price REAL, last_sale_date TEXT, qual TEXT,
     category TEXT, category_reason TEXT, lat REAL, lon REAL, geo_source TEXT, located INTEGER DEFAULT 0,
     first_seen TEXT, baseline INTEGER DEFAULT 0, outcome TEXT DEFAULT 'reo'
+);
+CREATE TABLE IF NOT EXISTS sr1a_sales (     -- every deed on a parcel the tracker follows
+    pin TEXT, deed_date TEXT, recorded TEXT, price REAL, nu TEXT, kind TEXT, location TEXT, prop_class TEXT,
+    PRIMARY KEY (pin, deed_date, price, nu)
 );
 """
 
@@ -42,7 +46,15 @@ def load_years(db: DB, years: list[int], fetch=download_years, since: str = "201
     # Third-party sheriff's sales were added later: their first load is history too, not news.
     sold_baseline = db.conn.execute("SELECT COUNT(*) FROM reo_history WHERE outcome='sold'").fetchone()[0] == 0
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    sales = (s for y in sorted(files) for s in iter_sales(files[y]))
+    by_pin: dict[str, list] = {}
+
+    def tracked_sales():
+        for y in sorted(files):
+            for s in iter_sales(files[y]):
+                if s.prop_class in TRACKED_CLASSES and s.deed_date:
+                    by_pin.setdefault(s.pin, []).append(s)
+                yield s
+    sales = tracked_sales()
     stats = {"years": sorted(files), "missing_years": [y for y in years if y not in files], "events": 0, "new": 0,
              "sold": 0}
     for e in history_events(sales, since=since):
@@ -70,8 +82,39 @@ def load_years(db: DB, years: list[int], fetch=download_years, since: str = "201
             f"INSERT INTO reo_history ({','.join(cols)}) VALUES ({','.join('?' * len(cols))}) "
             f"ON CONFLICT(property_id) DO UPDATE SET {','.join(f'{c}=excluded.{c}' for c in cols if c not in ('first_seen', 'baseline'))}",
             [row[c] for c in cols])
+    stats["deeds_kept"] = save_deeds(db, by_pin)
     db.commit()
     return stats
+
+
+def followed_pins(db: DB) -> set[str]:
+    pins: set[str] = set()
+    for sql in ("SELECT pams_pin, parcel_pins FROM listings WHERE pams_pin IS NOT NULL",
+                "SELECT pams_pin, NULL FROM lis_pendens WHERE pams_pin IS NOT NULL",
+                "SELECT pams_pin, NULL FROM reo_history"):
+        try:
+            for pin, more in db.conn.execute(sql):
+                pins.add(pin)
+                if more:
+                    pins.update(json.loads(more))
+        except Exception:  # noqa: BLE001 - table not there yet
+            pass
+    return pins
+
+
+def save_deeds(db: DB, by_pin: dict) -> int:
+    """Keep the state's deed history for parcels the tracker follows (names are blank in this data)."""
+    labels = {"reo": "Lender took title", "sold": "Sheriff's deed to an outside buyer", "reo_resale": "Lender sold its REO"}
+    n = 0
+    for pin in followed_pins(db) & set(by_pin):
+        for s in by_pin[pin]:
+            kind = classify_sale(s)
+            label = labels.get(kind) if kind else ("Deed in lieu of foreclosure" if "18" in (s.nu, s.assessor_nu) else
+                                                  "Deed (sale)" if s.price > 100 and not s.nu else "Deed (non-market transfer)")
+            db.conn.execute("INSERT OR IGNORE INTO sr1a_sales VALUES (?,?,?,?,?,?,?,?)",
+                            (pin, s.deed_date, s.recorded, s.price, s.nu or s.assessor_nu, label, s.location, s.prop_class))
+            n += 1
+    return n
 
 
 def locate_pending(cfg: dict, db: DB, parcels: ParcelClient, cap: int = 400) -> dict:
@@ -117,6 +160,13 @@ def run(cfg: dict, db: DB, parcels: ParcelClient, today: date | None = None, fet
     done = set(json.loads(db.get_meta("sr1a_years_done") or "[]"))
     if db.get_meta("sr1a_has_sold") != "1":       # years read before third-party sales were kept
         done = set()
+    # Once a week read every year again, so parcels the tracker started following since then get
+    # their full deed history too.
+    last_full = db.get_meta("sr1a_full_read") or ""
+    if last_full < (today - timedelta(days=7)).isoformat() or db.get_meta("sr1a_has_deeds") != "1":
+        done = set()
+        db.set_meta("sr1a_full_read", today.isoformat())
+        db.set_meta("sr1a_has_deeds", "1")
     # A file named for year Y holds deeds from about mid Y-1 to mid Y; 2018 deeds need the 2018 and 2019 files.
     wanted = [y for y in range(first_year, today.year + 1) if y not in done or y >= today.year - 1]
     stats = load_years(db, wanted, fetch=fetch, since=str(cfg.get("reo_history_since", "2018-01-01")))

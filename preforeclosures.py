@@ -36,6 +36,8 @@ def main(argv=None) -> int:
         browser = pw.chromium.launch(headless=True)
         try:
             stats = run_lis_pendens(cfg, db, browser, ParcelClient(), Geocoder())
+            from tracker.pipeline import verify_parcels
+            stats["parcel_check"] = verify_parcels(cfg, ParcelClient(), db, Geocoder(), table="lis_pendens")
         finally:
             browser.close()
     logging.info("Pre-foreclosures: %s", json.dumps(stats))

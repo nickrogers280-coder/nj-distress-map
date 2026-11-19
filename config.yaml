@@ -15,9 +15,9 @@ land_classes: ["1"]                  # vacant land, shown as its own category
 min_assessed_value: 0
 
 # Pre-foreclosures: foreclosure lis pendens from county clerk records (Essex 2, Passaic 17).
-lis_pendens_counties: [2, 17]
+lis_pendens_counties: [2, 17, 3, 8]   # Essex, Passaic, Burlington, Monmouth (Sunrise PRESS clerk sites)
 lis_pendens_lookback_days: 270   # first run looks back this far (spread over a few runs)
-max_lis_pendens_per_run: 80      # documents read per run
+max_lis_pendens_per_county: 35   # documents read per county per run
 
 # Bank-owned (REO): properties the foreclosing lender bought back at sheriff sale.
 reo_enabled: true

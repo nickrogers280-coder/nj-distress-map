@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from .civilview import CivilViewClient, ListingRow, SaleDetail, outcome_from_history
 from .counties import CIVILVIEW_NJ
 from .db import DB, norm_address
-from .parcels import ParcelClient, looks_like_entity, parse_block_lot, parse_lot_list
+from .parcels import ParcelClient, looks_like_entity, lot_named, parse_block_lot, parse_lot_list, stated_block_lot
 
 log = logging.getLogger(__name__)
 
@@ -113,6 +113,54 @@ def classify(rec: dict, cfg: dict) -> tuple[str, str]:
     return "target", f"Tax class {pc} ({rec.get('class_label')})"
 
 
+def parcel_matches_filing(rec: dict) -> bool | None:
+    """True/False: the matched tax parcel is/isn't the block and lot the filing names for this
+    property. None: the filing names no block and lot (address match only)."""
+    sb, sl, _ = stated_block_lot(rec.get("street") or rec.get("address"), rec.get("parcel_text"), rec.get("description"))
+    if not sb:
+        sb, sl = rec.get("stated_block"), rec.get("stated_lot")
+    if not sb:
+        # Older records kept no copy of the filing's block/lot, but a block/lot match was looked up with it.
+        return True if str(rec.get("match_method") or "").startswith("block") else None
+    norm = lambda v: re.sub(r"^0+(?=\d)", "", str(v or "").strip().upper()).removesuffix(".00").removesuffix(".0")
+    if norm(sb) != norm(rec.get("block")):
+        return False
+    lots = json.loads(rec["lots"]) if isinstance(rec.get("lots"), str) and rec["lots"].startswith("[") else [rec.get("lot")]
+    lots = [norm(x) for x in lots if x]
+    return (not sl) or norm(sl) in lots or any(lot_named(l, rec.get("parcel_text"), rec.get("description")) for l in lots)
+
+
+def verify_parcels(cfg: dict, parcels: ParcelClient, db: DB, geocoder=None, table: str = "listings") -> dict:
+    """Re-check that each tracked property's tax parcel is the block/lot its filing names; when it
+    isn't, look the filing's own block/lot up again and move the pin and outline to it."""
+    s = {"checked": 0, "mismatched": 0, "repaired": 0}
+    where = "(is_open=1 OR outcome='reo')" if table == "listings" else "status='pending'"
+    rows = db.conn.execute(f"SELECT * FROM {table} WHERE {where} AND category IN ('target','land','possible')").fetchall()
+    for r in rows:
+        rec = dict(r)
+        s["checked"] += 1
+        if parcel_matches_filing(rec) is not False:
+            continue
+        s["mismatched"] += 1
+        trial = {k: rec.get(k) for k in rec}
+        for k in ("pams_pin", "parcel_pins", "lots", "match_method"):
+            trial[k] = None
+        if not trial.get("parcel_text") and trial.get("stated_block"):
+            trial["parcel_text"] = f"Block {trial['stated_block']} Lot {trial.get('stated_lot') or ''}"
+        _enrich(trial, parcels, rec.get("county") or "")
+        if trial.get("pams_pin") and parcel_matches_filing(trial):
+            trial["category"], trial["category_reason"] = classify(trial, cfg)
+            trial["lat"] = trial["lon"] = trial["geo_source"] = None
+            locate(trial, parcels, geocoder)
+            cols = [k for k in trial if k in r.keys() and k != "property_id"]
+            db.conn.execute(f"UPDATE {table} SET {','.join(c + '=?' for c in cols)} WHERE property_id=?",
+                            [trial[c] for c in cols] + [rec["property_id"]])
+            s["repaired"] += 1
+            log.info("Parcel repaired for %s: now Block %s Lot %s", rec["property_id"], trial.get("block"), trial.get("lot"))
+    db.commit()
+    return s
+
+
 def parcel_audit(cfg: dict, parcels: ParcelClient, db: DB, geocoder=None) -> dict:
     """One-time re-match of stored listings under the stricter parcel rules: address-only and
     unmatched listings are looked up again, and every tracked property's pin is re-placed with
@@ -187,8 +235,9 @@ def _detail_fields(d: SaleDetail) -> dict:
 
 
 def _enrich(rec: dict, parcels: ParcelClient, county_name: str) -> dict:
-    block, lot, qual = parse_block_lot(rec.get("parcel_text"), rec.get("description"))
-    rec.update({"block": block, "lot": lot, "qual": qual})
+    block, lot, qual = stated_block_lot(rec.get("street") or rec.get("address"), rec.get("parcel_text"),
+                                        rec.get("description"))
+    rec.update({"block": block, "lot": lot, "qual": qual, "stated_block": block, "stated_lot": lot})
     m = parcels.lookup(county_name, rec.get("city") or "", rec.get("street") or rec.get("address") or "",
                        block, lot, qual)
     if m:

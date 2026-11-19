@@ -101,6 +101,9 @@ class FakeClient:
     def __init__(self):
         self.searches = []
 
+    def doc_types(self):
+        return ["LIS PENDENS FORECLOSURE", "LIS PENDENS DISCHARGE", "DEED"]
+
     def search_doc_type(self, label_re, a, b):
         self.searches.append((label_re.pattern, a, b))
         if "FORECLOS" in label_re.pattern:
@@ -219,3 +222,11 @@ def test_pre_foreclosures_on_map(tmp_path):
     pre = [p for p in m["properties"] if p.get("stage") == "pre"]
     assert [p["property_id"] for p in pre] == ["lp:2:9"] and pre[0]["mortgage_amount"] == 500000
     assert [a["kind"] for a in m["alerts"]] == ["lis_pendens"]
+
+
+def test_lis_pendens_type_names_by_county():
+    assert LP.LP_FORECLOSURE.search("FORECLOSURE LISPENDENS") and LP.LP_FORECLOSURE.search("LIS PENDENS FORECLOSURE AND RECOVERY")
+    assert not LP.LP_FORECLOSURE.search("LIS PENDENS") and LP.LP_PLAIN.search("LIS PENDENS")
+    assert not LP.LP_PLAIN.search("LIS PENDENS - AMENDED")
+    assert LP.LP_DISCHARGE.search("DISCHARGE/LISPENDENS") and LP.LP_DISCHARGE.search("LIS PENDENS - RELEASED")
+    assert LP.LP_IN_REM.search("LIS IN REM COMPLAINT")
