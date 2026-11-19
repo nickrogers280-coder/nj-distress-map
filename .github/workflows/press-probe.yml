@@ -17,4 +17,4 @@ jobs:
           pip install -q -r requirements.txt playwright pillow
           python -m playwright install --with-deps chromium > /dev/null
       - run: |
-          if [ "${{ inputs.instrument }}" = "lp" ]; then python tools/press_lp_probe.py ${{ inputs.county }}; else python tools/press_probe.py ${{ inputs.county }} ${{ inputs.instrument }}; fi
+          if [ "${{ inputs.instrument }}" = "adapters" ]; then python tools/adapter_probe.py; elif [ "${{ inputs.instrument }}" = "lp" ]; then python tools/press_lp_probe.py ${{ inputs.county }}; else python tools/press_probe.py ${{ inputs.county }} ${{ inputs.instrument }}; fi
