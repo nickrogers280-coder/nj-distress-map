@@ -15,7 +15,7 @@ jobs:
           pip install -q -r requirements.txt playwright
           python -m playwright install --with-deps chromium > /dev/null
       - run: python tools/clerk_survey.py ${{ inputs.counties }}
-        if: ${{ inputs.counties != 'step2' && inputs.counties != 'step3' && inputs.counties != 'step4' && inputs.counties != 'step5' }}
+        if: ${{ inputs.counties != 'step2' && inputs.counties != 'step3' && inputs.counties != 'step4' && inputs.counties != 'step5' && inputs.counties != 'step6' }}
       - run: python tools/clerk_survey2.py
         if: ${{ inputs.counties == 'step2' }}
       - run: python tools/clerk_probe3.py
@@ -24,6 +24,8 @@ jobs:
         if: ${{ inputs.counties == 'step4' }}
       - run: python tools/clerk_probe5.py
         if: ${{ inputs.counties == 'step5' }}
+      - run: python tools/clerk_probe6.py
+        if: ${{ inputs.counties == 'step6' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with: {name: survey, path: survey/, if-no-files-found: ignore}
