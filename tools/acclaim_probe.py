@@ -31,14 +31,10 @@ with sync_playwright() as pw:
     pg.goto(base + "search/SearchTypeDocType", wait_until="networkidle", timeout=60000)
     print("DOCTYPE PAGE", pg.url, re.sub(r"\s+", " ", pg.inner_text("body"))[:800])
     print("FIELDS", pg.eval_on_selector_all("input,select,button", "els => els.filter(e => e.type !== 'hidden').map(e => (e.name||e.id) + ':' + e.type).slice(0, 40)"))
-    boxes = pg.query_selector_all("input[name=DocTypeInfoCheckBox]")
-    picked = []
-    for bx in boxes:
-        lab = pg.evaluate("(e) => (e.closest('tr,li,div,label')||e.parentElement).innerText", bx)
-        if re.search(r"LIS PENDENS", lab or "", re.I):
-            pg.evaluate("(e) => { if (!e.checked) e.click(); }", bx); picked.append((bx.get_attribute("value"), lab.strip()[:60]))
-    print("PICKED", picked)
-    print("DOCTYPES FIELD", pg.evaluate("() => [document.querySelector('[name=DocTypesDisplay]')?.value, document.querySelector('#DocTypes, [name=DocTypes]')?.value]"))
+    m = re.search(r"LIS PENDENS \(LIS PENDENS\),LIS PENDENS BY MUNICIPALITY \(LIS PENDENS MUN\)\|([0-9,]+)", pg.content())
+    ids = m.group(1) if m else "130,131"
+    print("LP IDS", ids)
+    pg.evaluate("(ids) => { document.querySelector('#DocTypes, [name=DocTypes]').value = ids; const d = document.querySelector('[name=DocTypesDisplay]'); if (d) d.value = 'LIS PENDENS'; }", ids)
     for n, v in (("RecordDateFrom", start.strftime("%m/%d/%Y")), ("RecordDateTo", end.strftime("%m/%d/%Y"))):
         pg.evaluate("([n, v]) => { const e = document.querySelector(`[name=${n}]`); e.value = v; e.dispatchEvent(new Event('change', {bubbles: true})); }", [n, v])
     log.clear()
