@@ -50,21 +50,26 @@ PRESS_HOME = {2: "https://press.essexregister.com/prodpress/clerk/ClerkHome.aspx
               15: "https://clerk.ucnj.org/UCPA/DocIndex"}
 
 
+LP_CLOSED = {"discharged": "Lis pendens discharged", "sheriff_sale": "Went to a sheriff sale",
+             "sheriff_sold": "Sold at sheriff sale", "reo": "Bank took title", "sold": "Property sold"}
+
+
 def pre_foreclosures(db: DB, closed_cutoff: str, enriched: set) -> list[dict]:
     """Commercial / land properties with a foreclosure lis pendens that hasn't reached a sheriff sale."""
     try:
         rows = db.conn.execute(
             """SELECT * FROM lis_pendens WHERE category IN ('target','land')
-               AND (status = 'pending' OR (status = 'discharged' AND status_date >= ?))
-               ORDER BY recorded DESC""", (closed_cutoff[:10],)).fetchall()
+               ORDER BY recorded DESC""").fetchall()
     except Exception:  # noqa: BLE001 - table not created yet
         return []
     out = []
     for r in rows:
         r = dict(r)
         p = {k: r.get(k) for k in LP_FIELDS}
-        p.update({"stage": "pre", "is_open": 0, "lp_status": r.get("status"), "status_history": [],
-                  "latest_status": "Lis pendens (foreclosure filed)" if r.get("status") == "pending" else "Lis pendens discharged",
+        st = r.get("status") or "pending"
+        p.update({"stage": "pre", "is_open": 0, "lp_status": st, "status_history": [],
+                  "lp_closed_label": LP_CLOSED.get(st), "lp_closed_date": r.get("status_date") if st != "pending" else None,
+                  "latest_status": "Lis pendens (foreclosure filed)" if st == "pending" else LP_CLOSED.get(st, "Closed out"),
                   "detail_url": PRESS_HOME.get(r.get("county_id")), "enriched": r["property_id"] in enriched})
         out.append(p)
     return out
@@ -193,7 +198,10 @@ def _rank(p: dict) -> tuple:
 
 def _summary(p: dict) -> dict:
     if p.get("stage") == "pre":
-        kind, date, label = "lis_pendens", p.get("recorded"), "Lis pendens (foreclosure filed)"
+        kind, date = "lis_pendens", p.get("recorded")
+        label = "Lis pendens (foreclosure filed)" if p.get("lp_status", "pending") == "pending" else \
+            f"Lis pendens, closed out: {(p.get('lp_closed_label') or 'closed').lower()}" + \
+            (f" {p['lp_closed_date']}" if p.get("lp_closed_date") else "")
     elif p.get("stage") == "reo_hist":
         kind, date, label = "reo", p.get("outcome_date"), f"Bank took title ({p.get('reo_kind') or 'sheriff sale'})"
     elif p.get("stage") == "sale_hist":

@@ -175,7 +175,7 @@ def test_run_lis_pendens(tmp_path, monkeypatch):
     # Next day: nothing new is re-read; the search window starts a few days back to catch late indexing.
     client.searches.clear()
     s2 = LP.run_lis_pendens(cfg, db, FakeBrowser(client), FakeParcels(), today=date(2026, 11, 17))
-    assert s2["processed"] == 0 and client.searches[0][1] == date(2026, 11, 11)
+    assert s2["processed"] == 0 and client.searches[0][1] == date(2026, 10, 17)   # re-searched 30 days back: some clerks index late
 
     # Once the property shows up on a sheriff's sale list, the pre-foreclosure is linked to it.
     db.upsert({"property_id": "2:F-1", "county_id": 2, "pams_pin": "0706_303_14", "first_seen": "2026-12-01T00:00:00",

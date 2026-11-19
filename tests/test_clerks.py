@@ -59,3 +59,14 @@ def test_union_results_parse():
     assert a["instrument"] == "62/535" and a["recorded"] == "2026-10-23" and a["viewer"].endswith("bp=62/535")
     assert a["defendants"] == ["CASTILLO, SILVIO J"] and a["plaintiffs"] == ["FCR TL TRUST"]
     assert d["doc_type"] == "Lis Pendens Discharge" and d["defendants"] == ["MUNOZ, JORGE"] and d["viewer"] is None
+
+
+def test_acclaim_group_reads_block_lot_from_index():
+    a = clerks.AcclaimAdapter(10, "Hudson", "https://x/AcclaimWeb/", clerks.HUDSON_MUNIS, session=FakeSession())
+    gs = a._group([{"InstrumentNumber": "20261105050008620", "RecordDate": "/Date(1793886958000)/",
+                    "DirectName": "PIKEVIEW REALTY LLC", "IndirectName": "ABL RPC RESIDENTIAL CREDIT ACQUISITION LLC",
+                    "DocTypeDescription": "LIS PENDENS", "Comments": "FORECLOSE",
+                    "DocLegalDescription": "Lot: 19 Blk: 174 Municipality: 0909 Address: 21 PIKEVIEW TERRACE SECAUCUS"}])
+    g = gs[0]
+    assert g["block"] == "174" and g["lot"] == "19" and g["town"] == "Secaucus" and g["street"] == "21 PIKEVIEW TERRACE"
+    assert g["defendants"] == ["PIKEVIEW REALTY LLC"] and g["recorded"].startswith("2026-11-0") and "FORECLOSE" in g["doc_type"]

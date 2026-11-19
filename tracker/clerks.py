@@ -315,12 +315,110 @@ class UnionAdapter(Adapter):
             pass
 
 
+# ---------------------------------------------------------------------------- Acclaim (Hudson)
+HUDSON_MUNIS = {"0901": "Bayonne", "0902": "East Newark", "0903": "Guttenberg", "0904": "Harrison", "0905": "Hoboken",
+                "0906": "Jersey City", "0907": "Kearny", "0908": "North Bergen", "0909": "Secaucus",
+                "0910": "Union City", "0911": "Weehawken", "0912": "West New York"}
+
+
+class AcclaimAdapter(Adapter):
+    """Harris Acclaim (Hudson). The site shows a disclaimer that the owner has OK'd accepting each run.
+    Its index already carries the block, lot, municipality and address, so documents aren't read."""
+    system = "Acclaim"
+
+    def __init__(self, county_id: int, county: str, base: str, munis: dict | None = None, session=None):
+        import requests
+        from .press import BROWSER_UA
+        self.county_id, self.county, self.base = county_id, county, base.rstrip("/") + "/"
+        self.munis = munis or {}
+        self.s = session or requests.Session()
+        self.s.headers["User-Agent"] = BROWSER_UA
+        self._ready = False
+        self._types = None
+        self.last_error = None
+
+    def _start(self):
+        if not self._ready:
+            self.s.get(self.base, timeout=60)
+            self.s.post(self.base + "search/Disclaimer", data={"Disclaimer": "true"}, timeout=60)
+            page = self.s.get(self.base + "search/SearchTypeDocType", timeout=60).text
+            # The page lists every type as 'NAME (CODE)' with its ids after a '|', e.g. 'LIS PENDENS (LIS PENDENS),...|130,131'.
+            self._types = []
+            for m in re.finditer(r'value="(\d+)"[^>]*>\s*(?:</?[^>]+>\s*)*([A-Z][^<]{2,80}?\([^)]+\))', page):
+                self._types.append((m.group(1), m.group(2).strip()))
+            self._page = page
+            self._ready = True
+
+    def _ids(self, rx) -> str | None:
+        self._start()
+        ids = [i for i, name in self._types if rx.search(name)]
+        if not ids:
+            m = re.search(r"LIS PENDENS \(LIS PENDENS\),LIS PENDENS BY MUNICIPALITY \(LIS PENDENS MUN\)\|([0-9,]+)", self._page)
+            if m and rx.search("LIS PENDENS"):
+                return m.group(1)
+        return ",".join(ids) or None
+
+    def _search(self, ids: str, start: date, end: date) -> list[dict]:
+        rows = []
+        for a, b in _windows(start, end, 31):
+            form = {"DocTypes": ids, "DocTypesDisplay-input": "", "DocTypesDisplay": "", "DateRangeList": " ",
+                    "RecordDateFrom": f"{a.month}/{a.day}/{a.year}", "RecordDateTo": f"{b.month}/{b.day}/{b.year}",
+                    "X-Requested-With": "XMLHttpRequest"}
+            self.s.post(self.base + "search/SearchTypeDocType?Length=6", data=form,
+                        headers={"X-Requested-With": "XMLHttpRequest"}, timeout=120)
+            page = 1
+            while True:
+                g = self.s.post(self.base + "Search/GridResults", data={"page": page, "pageSize": 500},
+                                headers={"X-Requested-With": "XMLHttpRequest"}, timeout=120).json()
+                got = g.get("data") or g.get("Data") or []
+                rows += got
+                total = g.get("total") or g.get("Total") or len(got)
+                if not got or page * 500 >= total:
+                    break
+                page += 1
+        return rows
+
+    def _group(self, rows) -> list[dict]:
+        out: dict[str, dict] = {}
+        for r in rows:
+            inst = str(r.get("InstrumentNumber") or r.get("TransactionId"))
+            legal = r.get("DocLegalDescription") or ""
+            lot = re.search(r"Lot:\s*([^\s]+)", legal)
+            blk = re.search(r"Blk:\s*([^\s]+)", legal)
+            mun = re.search(r"Municipality:\s*(\d{4})", legal)
+            addr = re.search(r"Address:\s*(.+)$", legal)
+            town = self.munis.get(mun.group(1)) if mun else ""
+            street = addr.group(1).strip() if addr else None
+            if street and town and street.upper().endswith(town.upper()):
+                street = street[: -len(town)].strip()
+            ms = re.search(r"/Date\((\d+)\)/", str(r.get("RecordDate") or ""))
+            rec = datetime.utcfromtimestamp(int(ms.group(1)) / 1000).date().isoformat() if ms else None
+            g = out.setdefault(inst, {"instrument": inst, "doc_type": f"{r.get('DocTypeDescription') or ''} {r.get('Comments') or ''}".strip(),
+                                      "recorded": rec, "defendants": [], "plaintiffs": [], "town": town,
+                                      "block": blk.group(1) if blk else None, "lot": lot.group(1) if lot else None,
+                                      "street": street, "district": mun.group(1) if mun else None})
+            for k, side in (("DirectName", "defendants"), ("IndirectName", "plaintiffs")):
+                n = (r.get(k) or "").strip()
+                if n and n not in g[side]:
+                    g[side].append(n)
+        return list(out.values())
+
+    def lp_groups(self, start, end, fore_re, plain_re, in_rem_re):
+        ids = self._ids(re.compile(r"^LIS PENDENS\b(?!.*DISCH)", re.I))
+        return self._group(self._search(ids, start, end)) if ids else []
+
+    def discharge_groups(self, start, end, discharge_re):
+        ids = self._ids(re.compile(r"DISCH.*LIS ?PEND|LIS ?PEND.*(DISCH|CANCEL|RELEASE)", re.I))
+        return self._group(self._search(ids, start, end)) if ids else []
+
+
 # ---------------------------------------------------------------------------- registry
 NEWVISION_SITES = {
     1100: ("Mercer", "https://records.mercercounty.org/publicsearch/"),
     20: ("Salem", "https://clerkrecordsng.salemcountynj.gov/publicsearch/"),
 }
 UNION_ID = 15
+HUDSON_ID = 10
 
 
 def build_adapters(cfg: dict, browser, include_press: bool = True) -> list[Adapter]:
@@ -335,4 +433,6 @@ def build_adapters(cfg: dict, browser, include_press: bool = True) -> list[Adapt
             out.append(NewVisionAdapter(cid, name, base))
     if not want or UNION_ID in want:
         out.append(UnionAdapter(UNION_ID, "Union", browser))
+    if not want or HUDSON_ID in want:
+        out.append(AcclaimAdapter(HUDSON_ID, "Hudson", "https://acclaim.hcnj.us/AcclaimWeb/", HUDSON_MUNIS))
     return out

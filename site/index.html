@@ -298,6 +298,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const v = (a.new_value || "").toLowerCase();
     if (a.kind === "new") return "New listing";
     if (a.kind === "lis_pendens") return "New lis pendens";
+    if (a.kind === "lp_closed") return "Lis pendens closed out";
     if (a.kind === "sale_date") return "New sale date";
     if (a.kind === "upset") return "Upset changed";
     if (a.kind === "judgment") return "Judgment changed";
@@ -481,11 +482,12 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
       if (isReo(p) || !visibleBase(p)) continue;
       if (p.stage === "sale_hist") { if (p.outcome_date) out.push({ date: p.outcome_date, kind: "sold_hist", p }); continue; }
       if (isPre(p) && p.recorded) out.push({ date: p.recorded, kind: "lis_pendens", p });
+      if (isPre(p) && p.lp_closed_date) out.push({ date: p.lp_closed_date, kind: "lp_closed", p });
       else if (!isPre(p) && p.listed) out.push({ date: p.listed, kind: "listed", est: p.listed_estimated, p });
     }
     for (const a of DATA.alerts) {
       const p = byId.get(a.property_id);
-      if (!p || isReo(p) || !visibleBase(p) || a.kind === "new" || a.kind === "lis_pendens" || a.kind === "reo") continue;
+      if (!p || isReo(p) || !visibleBase(p) || a.kind === "new" || a.kind === "lis_pendens" || a.kind === "reo" || a.kind === "lp_closed") continue;
       out.push({ date: String(a.ts).slice(0, 10), kind: a.kind, a, p });
     }
     return out.sort((x, y) => y.date.localeCompare(x.date) || (x.kind === "listed" ? -1 : 1));
@@ -519,6 +521,9 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     } else if (e.kind === "sold_hist") {
       tag = `<span class="tag" style="--t:var(--pin-closed)">Sold at sheriff sale</span>`;
       line = `Outside buyer${p.sold_price ? " paid " + short$(p.sold_price) : ""}${p.net_value ? " · Assessed " + short$(p.net_value) : ""} · from state deed records`;
+    } else if (e.kind === "lp_closed") {
+      tag = `<span class="tag" style="--t:var(--pin-closed)">Lis pendens closed out</span>`;
+      line = `${esc(p.lp_closed_label || "Closed out")} · filed ${fmtDate(p.recorded)} by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")}`;
     } else if (e.kind === "lis_pendens") {
       tag = `<span class="tag" style="--t:var(--pin-pre)">Foreclosure filed</span>`;
       line = `Lis pendens by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")}${p.mortgage_amount ? " · Mortgage " + short$(p.mortgage_amount) : ""}`;
@@ -627,7 +632,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         <button class="x" id="d-close" aria-label="Close">×</button>
         <h2>${esc(titleCase(p.street) || "Address not listed")}</h2>
         <div class="where">${esc(placeLine(p))}${bl ? " · <span class='mono'>" + esc(bl) + "</span>" : ""}</div>
-        <div class="tags">${catTag}${isPre(p) ? `<span class="tag" style="--t:var(--pin-pre)">${p.lp_status === "pending" ? "Pre-foreclosure" : "Lis pendens discharged"}</span>` : p.is_open ? "" : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">Bank-owned (REO)</span>' : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
+        <div class="tags">${catTag}${isPre(p) ? `<span class="tag" style="--t:var(--pin-pre)">${p.lp_status === "pending" ? "Pre-foreclosure" : esc(p.lp_closed_label || "Lis pendens closed out")}</span>` : p.is_open ? "" : isReo(p) ? '<span class="tag" style="--t:var(--pin-reo)">Bank-owned (REO)</span>' : '<span class="tag" style="--t:var(--pin-closed)">Off the sale list</span>'}</div>
       </div>
       <div class="d-body">
         ${isReo(p) ? (p.stage === "reo_hist"
@@ -638,7 +643,9 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         ${stageTracker(p)}
         ${parcelGroup(p)}
         ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
-        ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : "Lis pendens discharged"} · lis pendens recorded ${fmtDate(p.recorded)}</b><div>${esc(titleCase(firstDefendant(p.plaintiff)) || "The lender")} has started foreclosure${p.complaint_filed ? ` (complaint filed ${fmtDate(p.complaint_filed)})` : ""}. Not yet on a sheriff's sale list.</div></div>` : ""}
+        ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : esc(p.lp_closed_label || "Lis pendens closed out")} · lis pendens recorded ${fmtDate(p.recorded)}</b><div>${p.lp_status === "pending"
+          ? `${esc(titleCase(firstDefendant(p.plaintiff)) || "The lender")} has started foreclosure${p.complaint_filed ? ` (complaint filed ${fmtDate(p.complaint_filed)})` : ""}. Not yet on a sheriff's sale list${p.recorded && (NOW - parseDay(p.recorded)) > 365 * 864e5 ? `: still open ${Math.floor((NOW - parseDay(p.recorded)) / (365.25 * 864e5))}+ years after filing` : ""}.`
+          : `Closed out ${p.lp_closed_date ? fmtDate(p.lp_closed_date) : ""}: ${esc((p.lp_closed_label || "").toLowerCase())}. The foreclosure by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")} is no longer open.`}</div></div>` : ""}
         <div class="figs">
           ${isPre(p) ? `<div class="fig"><span>Mortgage</span><b>${short$(p.mortgage_amount)}</b></div><div class="fig"><span>Mortgage date</span><b>${p.mortgage_date ? fmtDate(p.mortgage_date) : "—"}</b></div>` : `<div class="fig"><span>Upset</span><b>${short$(p.upset)}</b></div>`}
           ${isPre(p) ? "" : `<div class="fig"><span>Judgment</span><b>${short$(p.judgment)}</b></div>`}
@@ -708,7 +715,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
     const bk = hist.some((h) => /bankrupt/i.test(h[0]));
     const lp = isPre(p) ? p.recorded : (p.lp_recorded || null);
     const outcome = isReo(p) ? `Bank-owned (REO)` : p.is_open ? null :
-      isPre(p) ? (p.lp_status === "discharged" ? "Lis pendens discharged" : null) :
+      isPre(p) ? (p.lp_status && p.lp_status !== "pending" ? (p.lp_closed_label || "Closed out") : null) :
       /sold|purchas/i.test(p.latest_status || "") ? "Sold at sheriff sale" : /cancel|withdr|vacat|dismiss/i.test(p.latest_status || "") ? "Cancelled / withdrawn" : "Off the sale list";
     const steps = [
       { label: "Foreclosure filed", sub: lp ? `Lis pendens ${fmtDate(lp)}` : (isPre(p) ? "" : "Before sheriff list"), done: !!lp || !isPre(p) },

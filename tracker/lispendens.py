@@ -316,8 +316,13 @@ def link_to_deeds(db: DB) -> int:
         status = "reo" if "Lender took" in k or "lieu" in k else "sheriff_sold" if "Sheriff" in k else \
             "sold" if "sale" in k.lower() and (r["price"] or 0) > 1000 else None
         if status:
-            n += db.conn.execute("UPDATE lis_pendens SET status=?, status_date=? WHERE property_id=? AND status='pending'",
-                                 (status, r["deed_date"], r["property_id"])).rowcount
+            hit = db.conn.execute("UPDATE lis_pendens SET status=?, status_date=? WHERE property_id=? AND status='pending'",
+                                  (status, r["deed_date"], r["property_id"])).rowcount
+            if hit:
+                label = {"reo": "Bank took title", "sheriff_sold": "Sold at sheriff sale", "sold": "Property sold"}[status]
+                db.add_event(r["property_id"], datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                             "lp_closed", "pending", f"{label} ({r['deed_date']})")
+            n += hit
     db.commit()
     return n
 
@@ -355,6 +360,8 @@ def apply_discharges(db: DB, rows: list, county_id: int | None = None) -> int:
                any(same_party(a, b) for a in g["plaintiffs"] for b in parties.get("plaintiffs", [])):
                 db.conn.execute("UPDATE lis_pendens SET status='discharged', status_date=? WHERE property_id=?",
                                 (g["recorded"], p["property_id"]))
+                db.add_event(p["property_id"], datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+                             "lp_closed", "pending", f"Lis pendens discharged ({g['recorded']})")
                 n += 1
     db.commit()
     return n
@@ -503,8 +510,11 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
             stats["errors"][cname] = str(e)[:200]
         stats["indexed"] += cs["new"]
         known = {r[0] for r in db.conn.execute("SELECT instrument FROM lis_pendens WHERE county_id=?", (cid,))}
+        # Open filings first; then ones already closed out (discharged), so a lot's history shows them too.
         queue = db.conn.execute("SELECT * FROM lp_index WHERE county_id=? AND status='queued' "
-                                "ORDER BY priority DESC, recorded DESC", (cid,)).fetchall()
+                                "ORDER BY priority DESC, recorded DESC", (cid,)).fetchall() + \
+            db.conn.execute("SELECT * FROM lp_index WHERE county_id=? AND status='discharged' AND priority >= 4 "
+                            "ORDER BY recorded DESC", (cid,)).fetchall()
         for r in queue:
             if cs["processed"] >= cap:
                 stats["capped"] = True
@@ -528,6 +538,8 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
             # Older filings were history before tracking began: on the map, but not new alerts.
             old = (g.get("recorded") or "") < (today - timedelta(days=30)).isoformat()
             rec.update({"first_seen": ts, "baseline": int(baseline or old)})
+            if r["status"] == "discharged":
+                rec.update({"status": "discharged", "status_date": r["discharged_on"], "baseline": 1})
             save(db, rec)
             db.conn.execute("UPDATE lp_index SET status='read' WHERE county_id=? AND instrument=?", (cid, g["instrument"]))
             stats["processed"] += 1
@@ -535,7 +547,8 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
             if rec["category"] in ("target", "land"):
                 stats["tracked"] += 1
                 cs["tracked"] += 1
-                db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=bool(baseline or old))
+                if rec.get("status") == "pending":
+                    db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=bool(baseline or old))
             db.commit()
         cs["queued"] = db.conn.execute("SELECT COUNT(*) FROM lp_index WHERE county_id=? AND status='queued'", (cid,)).fetchone()[0]
         cs["indexed_back_to"] = (db.conn.execute("SELECT back_through FROM lp_backfill WHERE county_id=?", (cid,)).fetchone() or [None])[0]
