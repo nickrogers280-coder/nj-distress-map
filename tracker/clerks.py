@@ -249,31 +249,39 @@ class UnionAdapter(Adapter):
                 pg.fill("input[name=rpp]", "500")
                 with pg.expect_navigation(timeout=90000):
                     pg.click("input[type=submit]")
-                rows = pg.evaluate("""() => [...document.querySelectorAll('tr')].filter(tr => tr.querySelector("a[href*='Viewer']"))
-                    .map(tr => ({cells: [...tr.children].map(td => td.innerText.trim()),
-                                 viewer: tr.querySelector("a[href*='Viewer']").href}))""")
-                for r in rows:
-                    out.append(self._row(r))
+                text = pg.inner_text("body")
+                viewers = pg.eval_on_selector_all("a[href*='Viewer']", "els => els.map(e => e.href)")
+                out += self.parse_results(text, viewers)
         return out
 
-    @staticmethod
-    def _row(r) -> dict:
-        txt = " | ".join(r["cells"])
-        m = re.search(r"bp=([^&]+)", r["viewer"])
-        dt = re.search(r"dt=([^&]+)", r["viewer"])
-        rec = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", txt)
-        defs = re.findall(r"Defendant\s*\|?\s*([^|]+?)\s*(?:\||$)", txt)
-        plas = re.findall(r"Complainant\s*\|?\s*([^|]+?)\s*(?:\||$)", txt)
+    _REC = re.compile(r"(Lis Pendens(?: Discharge)?|Foreclosure)\t(Defendant|Complainant)\t([^\t\n]+)\t(\d{1,2}/\d{1,2}/\d{4})"
+                      r"[^\n]*\n(Defendant|Complainant)\t([^\t\n]+)\t(\d+/\d+)")
+
+    @classmethod
+    def parse_results(cls, text: str, viewers: list[str]) -> list[dict]:
+        """Date-search results: each document is two lines,
+           'Lis Pendens <tab> Defendant <tab> NAME <tab> 10/23/2026'  /  'Complainant <tab> NAME <tab> 62/535'."""
         from urllib.parse import unquote
-        return {"instrument": unquote(m.group(1)) if m else r["viewer"][-20:], "doc_type": unquote(dt.group(1)) if dt else "",
-                "recorded": _iso(rec.group(1)) if rec else None, "defendants": [d.strip() for d in defs],
-                "plaintiffs": [p.strip() for p in plas], "town": "", "viewer": r["viewer"]}
+        by_bp = {}
+        for v in viewers:
+            m = re.search(r"bp=([^&]+)", v)
+            if m:
+                by_bp.setdefault(unquote(m.group(1)), v)
+        out = []
+        for m in cls._REC.finditer(text):
+            dt, t1, n1, rec, t2, n2, bp = m.groups()
+            parties = {t1: n1.strip(), t2: n2.strip()}
+            out.append({"instrument": bp, "doc_type": dt, "recorded": _iso(rec),
+                        "defendants": [parties["Defendant"]] if parties.get("Defendant") else [],
+                        "plaintiffs": [parties["Complainant"]] if parties.get("Complainant") else [],
+                        "town": "", "viewer": by_bp.get(bp)})
+        return out
 
     def lp_groups(self, start, end, fore_re, plain_re, in_rem_re):
         rows = self._search(re.compile(r"^\s*Lis Pendens\s*$", re.I), start, end)
         merged: dict[str, dict] = {}
         for g in rows:
-            if re.search(r"DISCHARGE", g["doc_type"], re.I):
+            if re.search(r"DISCHARGE", g["doc_type"], re.I) or not g.get("viewer"):
                 continue
             m = merged.setdefault(g["instrument"], {**g, "defendants": [], "plaintiffs": []})
             m["defendants"] += [d for d in g["defendants"] if d not in m["defendants"]]

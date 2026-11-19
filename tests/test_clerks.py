@@ -51,9 +51,11 @@ def test_newvision_groups_carry_block_lot_and_parties():
     assert g["doc_type"] == "NOTICE OF LIS PENDENS"
 
 
-def test_union_row_parse():
-    r = {"cells": ["Lis Pendens", "Defendant", "CASTILLO, SILVIO J", "10/23/2026", "Complainant", "FCR TL TRUST", "62/535"],
-         "viewer": "https://clerk.ucnj.org/UCPA/Viewer?id=CAAB6GTS&dt=Lis%20Pendens&in=808&bp=62/535"}
-    g = clerks.UnionAdapter._row(r)
-    assert g["instrument"] == "62/535" and g["recorded"] == "2026-10-23"
-    assert g["defendants"] == ["CASTILLO, SILVIO J"] and g["plaintiffs"] == ["FCR TL TRUST"] and g["doc_type"] == "Lis Pendens"
+def test_union_results_parse():
+    text = ("Search by Date Results\nLis Pendens\tDefendant\tCASTILLO, SILVIO J\t10/23/2026\t \nComplainant\tFCR TL TRUST\t62/535\n"
+            "Lis Pendens Discharge\tComplainant\tFREEDOM MORTGAGE CORPORATION\t10/21/2026\t \nDefendant\tMUNOZ, JORGE\t49/614\n")
+    viewers = ["https://clerk.ucnj.org/UCPA/Viewer?id=CAAB6GTS&dt=Lis%20Pendens&in=808&bp=62/535"]
+    a, d = clerks.UnionAdapter.parse_results(text, viewers)
+    assert a["instrument"] == "62/535" and a["recorded"] == "2026-10-23" and a["viewer"].endswith("bp=62/535")
+    assert a["defendants"] == ["CASTILLO, SILVIO J"] and a["plaintiffs"] == ["FCR TL TRUST"]
+    assert d["doc_type"] == "Lis Pendens Discharge" and d["defendants"] == ["MUNOZ, JORGE"] and d["viewer"] is None
