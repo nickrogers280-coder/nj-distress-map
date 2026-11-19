@@ -218,8 +218,9 @@ def _owner_first(defs: list[str]) -> list[str]:
     return sorted(defs, key=lambda d: (bool(gov.search(d)), not looks_like_entity(d)))
 
 
-def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, cid: int, cname: str, g: dict,
+def process_instrument(cfg: dict, client, parcels: ParcelClient, cid: int, cname: str, g: dict,
                        geocoder=None, max_pages: int = 8) -> dict:
+    """`client` is a county adapter (tracker.clerks) or, in older callers, a PressClient."""
     from .pipeline import classify, locate, _enrich
     rec = {"property_id": f"lp:{cid}:{g['instrument']}", "county_id": cid, "county": cname,
            "instrument": g["instrument"], "doc_type": g["doc_type"],
@@ -229,17 +230,15 @@ def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, ci
     rec["defendant"] = "; ".join(defs)
     rec["plaintiff"] = "; ".join(g["plaintiffs"])
     rec["parties"] = json.dumps({"defendants": g["defendants"], "plaintiffs": g["plaintiffs"]})
-    doc = client.open_document(g["instrument"])
-    if not doc:
-        from .enrich import save_debug
-        save_debug(client, f"lp-{cname}-{g['instrument']}")
-    texts = []
-    if doc:
-        tile, n = doc
-        for i in range(min(n, max_pages)):
-            png = client.page_image(tile, i)
-            if png:
-                texts.append(ocr_png(png))
+    if hasattr(client, "pages"):
+        pngs = client.pages(g, max_pages)
+    else:                                   # a bare PressClient (tests, older callers)
+        doc = client.open_document(g["instrument"])
+        if not doc:
+            from .enrich import save_debug
+            save_debug(client, f"lp-{cname}-{g['instrument']}")
+        pngs = [x for x in (client.page_image(doc[0], i) for i in range(min(doc[1], max_pages))) if x] if doc else []
+    texts = [ocr_png(png) for png in pngs]
     rec["pages_read"] = len(texts)
     if not (LP_FORECLOSURE.search(g["doc_type"]) or LP_IN_REM.search(g["doc_type"])):
         joined = "\n".join(texts)
@@ -254,6 +253,9 @@ def process_instrument(cfg: dict, client: PressClient, parcels: ParcelClient, ci
               "attorney_firm", "attorney_address"):
         if info.get(k) is not None:
             rec[k] = info[k]
+    for k in ("block", "lot", "street"):
+        if not rec.get(k) and g.get(k):
+            rec[k] = g[k].title() if k == "street" else g[k]
     city = info.get("muni_name") or info.get("city") or (g.get("town") or "").title()
     rec["city"] = rec.get("city") or city
     if rec.get("block") or rec.get("street"):
@@ -298,12 +300,16 @@ def link_to_sheriff_sales(db: DB) -> int:
     return n
 
 
-def apply_discharges(db: DB, rows: list) -> int:
-    """A lis pendens discharge names the same parties: mark matching pre-foreclosures resolved."""
+def apply_discharges(db: DB, rows: list, county_id: int | None = None) -> int:
+    """A lis pendens discharge names the same parties: mark matching pre-foreclosures resolved.
+    `rows` are index rows (PRESS) or already-grouped documents (other adapters)."""
     from .contacts import same_party
     n = 0
-    pending = db.conn.execute("SELECT property_id, county_id, parties, recorded FROM lis_pendens WHERE status='pending'").fetchall()
-    for g in group_instruments(rows).values():
+    pending = db.conn.execute("SELECT property_id, county_id, parties, recorded FROM lis_pendens WHERE status='pending'"
+                              + (" AND county_id=?" if county_id is not None else ""),
+                              (county_id,) if county_id is not None else ()).fetchall()
+    groups = [r for r in rows if isinstance(r, dict)] or list(group_instruments(rows).values())
+    for g in groups:
         for p in pending:
             parties = json.loads(p["parties"] or "{}")
             if (p["recorded"] or "") > (g["recorded"] or "9999"):
@@ -317,47 +323,57 @@ def apply_discharges(db: DB, rows: list) -> int:
     return n
 
 
-def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=None, today: date | None = None) -> dict:
-    """Search each PRESS county for new foreclosure lis pendens and process them."""
+def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=None, today: date | None = None,
+                    adapters: list | None = None) -> dict:
+    """Search each connected county clerk for new foreclosure lis pendens and process them."""
+    from . import clerks
     ensure_tables(db)
     today = today or datetime.now(timezone.utc).date()
     lookback = int(cfg.get("lis_pendens_lookback_days", 270))
     cap = int(cfg.get("max_lis_pendens_per_county", cfg.get("max_lis_pendens_per_run", 40)))
     overlap = 5                                     # clerks index documents a few days after recording
-    stats = {"found": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {}, "capped": False}
+    stats = {"found": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {}, "capped": False,
+             "by_county": {}}
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    for cid, base in PRESS_SITES.items():
-        if cid not in (cfg.get("lis_pendens_counties") or list(PRESS_SITES)):
-            continue
-        cname = PRESS_COUNTY_NAMES.get(cid, str(cid))
+    if adapters is None:
+        want = cfg.get("lis_pendens_counties")
+        adapters = []
+        for cid, base in PRESS_SITES.items():
+            if not want or cid in want:
+                try:
+                    adapters.append(clerks.PressAdapter(cid, PRESS_COUNTY_NAMES.get(cid, str(cid)), base, browser,
+                                                        client_factory=PressClient))
+                except Exception as e:  # noqa: BLE001
+                    stats["errors"][PRESS_COUNTY_NAMES.get(cid, str(cid))] = str(e)[:200]
+        for a in clerks.build_adapters(cfg, browser, include_press=False):
+            adapters.append(a)
+    for ad in adapters:
+        cid, cname = ad.county_id, ad.county
         row = db.conn.execute("SELECT checked_through FROM lp_scan WHERE county_id=?", (cid,)).fetchone()
         baseline = row is None
         start = (date.fromisoformat(row[0]) - timedelta(days=overlap)) if row else today - timedelta(days=lookback)
+        cs = {"found": 0, "processed": 0, "tracked": 0, "system": ad.system}
+        stats["by_county"][cname] = cs
         try:
-            ctx = browser.new_context(user_agent=BROWSER_UA, viewport={"width": 1400, "height": 1000})
-            client = PressClient(base, ctx.new_page())
-            types = client.doc_types()
-            fore = LP_FORECLOSURE if any(LP_FORECLOSURE.search(t) for t in types) else LP_PLAIN
-            rows = index_rows(client, fore, start, today)
-            rows += index_rows(client, LP_IN_REM, start, today)
-            stats["discharged"] += apply_discharges(db, index_rows(client, LP_DISCHARGE, start, today))
+            groups = {g["instrument"]: g for g in ad.lp_groups(start, today, LP_FORECLOSURE, LP_PLAIN, LP_IN_REM)}
+            stats["discharged"] += apply_discharges(db, ad.discharge_groups(start, today, LP_DISCHARGE), county_id=cid)
         except Exception as e:  # noqa: BLE001
             log.exception("%s: lis pendens search failed", cname)
             stats["errors"][cname] = str(e)[:200]
+            ad.close()
             continue
-        groups = group_instruments(rows)
+        cs["found"] = len(groups)
         stats["found"] += len(groups)
         known = {r[0] for r in db.conn.execute("SELECT instrument FROM lis_pendens WHERE county_id=?", (cid,))}
         todo = [g for g in groups.values() if g["instrument"] not in known]
         todo.sort(key=lambda g: g["recorded"] or "", reverse=True)        # newest first
         done_all = True
-        county_done = 0
         for g in todo:
-            if county_done >= cap:
+            if cs["processed"] >= cap:
                 stats["capped"], done_all = True, False
                 break
             try:
-                rec = process_instrument(cfg, client, parcels, cid, cname, g, geocoder)
+                rec = process_instrument(cfg, ad, parcels, cid, cname, g, geocoder)
             except Exception as e:  # noqa: BLE001
                 log.exception("%s: lis pendens %s failed", cname, g["instrument"])
                 stats["errors"][f"{cname} {g['instrument']}"] = str(e)[:200]
@@ -365,18 +381,16 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
             rec.update({"first_seen": ts, "baseline": int(baseline)})
             save(db, rec)
             stats["processed"] += 1
-            county_done += 1
+            cs["processed"] += 1
             if rec["category"] in ("target", "land"):
                 stats["tracked"] += 1
+                cs["tracked"] += 1
                 db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=baseline)
             db.commit()
         if done_all:
             db.conn.execute("INSERT OR REPLACE INTO lp_scan (county_id, checked_through) VALUES (?, ?)",
                             (cid, today.isoformat()))
             db.commit()
-        try:
-            ctx.close()
-        except Exception:  # noqa: BLE001
-            pass
+        ad.close()
     stats["linked"] = link_to_sheriff_sales(db)
     return stats

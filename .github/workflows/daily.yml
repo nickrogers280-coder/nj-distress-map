@@ -50,7 +50,7 @@ jobs:
 
       - name: Pre-foreclosures (lis pendens) and contact enrichment from county records
         continue-on-error: true      # never let this hold back the map update
-        timeout-minutes: 90
+        timeout-minutes: 170
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr poppler-utils > /dev/null
           pip install -q playwright pillow
