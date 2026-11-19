@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from .db import DB
 from .parcels import ParcelClient, parse_block_lot
-from .press import BROWSER_UA, PRESS_SITES, PressClient, ocr_png
+from .press import BROWSER_UA, PRESS_COUNTY_NAMES, PRESS_SITES, PressClient, ocr_png
 
 log = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
     for cid, base in PRESS_SITES.items():
         if cid not in (cfg.get("lis_pendens_counties") or list(PRESS_SITES)):
             continue
-        cname = {2: "Essex", 17: "Passaic"}.get(cid, str(cid))
+        cname = PRESS_COUNTY_NAMES.get(cid, str(cid))
         row = db.conn.execute("SELECT checked_through FROM lp_scan WHERE county_id=?", (cid,)).fetchone()
         baseline = row is None
         start = (date.fromisoformat(row[0]) - timedelta(days=overlap)) if row else today - timedelta(days=lookback)

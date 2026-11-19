@@ -17,7 +17,10 @@ log = logging.getLogger(__name__)
 PRESS_SITES = {
     2: "https://press.essexregister.com/prodpress/clerk/",       # Essex
     17: "https://records.passaiccountynj.org/press/clerk/",      # Passaic
+    3: "https://press.co.burlington.nj.us/press/clerk/",         # Burlington
+    8: "https://oprs.co.monmouth.nj.us/Oprs/clerk/",             # Monmouth (OPRS is Sunrise PRESS)
 }
+PRESS_COUNTY_NAMES = {2: "Essex", 17: "Passaic", 3: "Burlington", 8: "Monmouth"}
 # ASP.NET serves a reduced, script-less page to browsers it doesn't recognise, and the image viewer
 # then never loads; so present a standard Chrome identity, still naming the tracker at the end.
 BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 "
