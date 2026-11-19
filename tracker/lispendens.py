@@ -232,6 +232,41 @@ def _owner_first(defs: list[str]) -> list[str]:
     return sorted(defs, key=lambda d: (bool(gov.search(d)), not looks_like_entity(d)))
 
 
+def lp_category(rec: dict, cfg: dict) -> tuple[str, str]:
+    """A lis pendens is tracked only when the block and lot it names is a commercial tax parcel:
+    the filing's (or the county index's) block/lot must be the parcel found on the tax map, and
+    that parcel's class must be 4A, 4B or 4C."""
+    from .pipeline import classify
+    if rec.get("kind") == "other":
+        return "other", "Lis pendens that isn't a foreclosure"
+    cat, why = classify(rec, cfg)
+    if cat == "other":
+        return cat, why
+    classes = {c.upper() for c in cfg.get("lis_pendens_classes", ["4A", "4B", "4C"])}
+    pc = (rec.get("prop_class") or "").upper()
+    if pc not in classes:
+        return "other", f"Tax class {pc} ({rec.get('class_label')}); lis pendens are tracked for {'/'.join(sorted(classes))} only"
+    if not str(rec.get("match_method") or "").startswith("block"):
+        return "other", "Block and lot couldn't be confirmed from the filing (matched by address only)"
+    return cat, why
+
+
+def reclassify_lis_pendens(db: DB, cfg: dict) -> dict:
+    """Apply the commercial-only rule to every stored lis pendens (no network)."""
+    ensure_tables(db)
+    changed = {}
+    for r in db.conn.execute("SELECT * FROM lis_pendens").fetchall():
+        r = dict(r)
+        cat, why = lp_category(r, cfg)
+        if (cat, why) != (r.get("category"), r.get("category_reason")):
+            db.conn.execute("UPDATE lis_pendens SET category=?, category_reason=? WHERE property_id=?",
+                            (cat, why, r["property_id"]))
+            k = f"{r.get('category')}->{cat}"
+            changed[k] = changed.get(k, 0) + 1
+    db.commit()
+    return changed
+
+
 def process_instrument(cfg: dict, client, parcels: ParcelClient, cid: int, cname: str, g: dict,
                        geocoder=None, max_pages: int = 8) -> dict:
     """`client` is a county adapter (tracker.clerks) or, in older callers, a PressClient."""
@@ -284,9 +319,7 @@ def process_instrument(cfg: dict, client, parcels: ParcelClient, cid: int, cname
             rec.pop(k, None)
     else:
         rec["match_method"] = "unmatched"
-    rec["category"], rec["category_reason"] = classify(rec, cfg)
-    if rec["kind"] == "other":
-        rec["category"], rec["category_reason"] = "other", "Lis pendens that isn't a foreclosure"
+    rec["category"], rec["category_reason"] = lp_category(rec, cfg)
     if rec["category"] in ("target", "land"):
         locate(rec, parcels, geocoder)
     return rec
@@ -449,6 +482,9 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
     unread documents."""
     from . import clerks
     ensure_tables(db)
+    stats0 = reclassify_lis_pendens(db, cfg)
+    if stats0:
+        log.info("Lis pendens reclassified: %s", stats0)
     today = today or datetime.now(timezone.utc).date()
     since = date.fromisoformat(str(cfg.get("lis_pendens_since") or
                                    (today - timedelta(days=int(cfg.get("lis_pendens_lookback_days", 270)))).isoformat()))

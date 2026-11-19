@@ -643,7 +643,7 @@ details p { font-size: 12px; color: var(--ink-2); line-height: 1.5; margin: 6px 
         ${stageTracker(p)}
         ${parcelGroup(p)}
         ${alerts.length ? `<div class="alerts-box">${alerts.map((a) => `<div><b>${esc(alertLabel(a))}</b> · ${esc(alertText(a))} <small>${ago(a.ts)}</small></div>`).join("")}</div>` : ""}
-        ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : esc(p.lp_closed_label || "Lis pendens closed out")} · lis pendens recorded ${fmtDate(p.recorded)}</b><div>${p.lp_status === "pending"
+        ${isPre(p) ? `<div class="pre-box"><b>${p.lp_status === "pending" ? "Foreclosure filed" : esc(p.lp_closed_label || "Lis pendens closed out")} · lis pendens recorded ${fmtDate(p.recorded)}</b><div class="note">Affects Block ${esc(p.block || "?")} Lot ${esc(p.lot || "?")}${p.muni ? ", " + esc(titleCase(p.muni)) : ""} · tax class ${esc(p.prop_class || "?")} (${esc(p.class_label || "")}), confirmed on the tax map.</div><div>${p.lp_status === "pending"
           ? `${esc(titleCase(firstDefendant(p.plaintiff)) || "The lender")} has started foreclosure${p.complaint_filed ? ` (complaint filed ${fmtDate(p.complaint_filed)})` : ""}. Not yet on a sheriff's sale list${p.recorded && (NOW - parseDay(p.recorded)) > 365 * 864e5 ? `: still open ${Math.floor((NOW - parseDay(p.recorded)) / (365.25 * 864e5))}+ years after filing` : ""}.`
           : `Closed out ${p.lp_closed_date ? fmtDate(p.lp_closed_date) : ""}: ${esc((p.lp_closed_label || "").toLowerCase())}. The foreclosure by ${esc(titleCase(firstDefendant(p.plaintiff)) || "the lender")} is no longer open.`}</div></div>` : ""}
         <div class="figs">
