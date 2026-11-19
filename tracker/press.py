@@ -180,7 +180,24 @@ class PressClient:
             self._fail("no Get/Display Image button on the record page", instrument)
             return None
         deadline, tried_direct, seen = time.time() + 60, set(), {}
+        forced_at = time.time() + 10
         while time.time() < deadline:
+            if forced_at and time.time() > forced_at:
+                # Passaic's Display Image sets its image pane through a Telerik splitter that a headless
+                # browser doesn't always run; the pane's address is a literal in ShowImg(), so load it directly.
+                forced_at = None
+                try:
+                    forced = self.page.evaluate("""() => {
+                        if ([...document.querySelectorAll('iframe')].some(f => { try { return /ViewerNew/.test(f.contentWindow.location.href); } catch (e) { return false; } })) return 'viewer already open';
+                        const m = String(window.ShowImg || '').match(/RetrieveImage\.aspx[^'"]*/);
+                        const f = document.querySelector('iframe[id*="RadPaneImage"]') || document.querySelector('iframe');
+                        if (!m || !f) return null;
+                        f.src = m[0]; return 'pane loaded directly';
+                    }""")
+                    if forced:
+                        log.info("Image pane: %s", forced)
+                except Exception:  # noqa: BLE001
+                    pass
             for fr in [f for pg in self.page.context.pages for f in pg.frames]:
                 if "RetrieveImage" in fr.url and fr.url not in tried_direct:
                     # Some sessions get the document file itself (PDF or TIFF) instead of the viewer.
