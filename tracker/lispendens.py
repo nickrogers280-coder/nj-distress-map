@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS lis_pendens (
     pages_read INTEGER, ocr_ok INTEGER, stated_block TEXT, stated_lot TEXT
 );
 CREATE TABLE IF NOT EXISTS lp_scan (county_id INTEGER PRIMARY KEY, checked_through TEXT);
+-- Every lis pendens in a county's index since lis_pendens_since, read or not. Documents are read
+-- from this queue most-promising first (owner is a company, the index names a commercial lot).
+CREATE TABLE IF NOT EXISTS lp_index (
+    county_id INTEGER, instrument TEXT, doc_type TEXT, recorded TEXT, defendants TEXT, plaintiffs TEXT,
+    town TEXT, block TEXT, lot TEXT, street TEXT, extra TEXT, priority INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'queued',      -- queued | read | skipped | discharged
+    status_note TEXT, discharged_on TEXT, seen TEXT,
+    PRIMARY KEY (county_id, instrument)
+);
+CREATE TABLE IF NOT EXISTS lp_backfill (county_id INTEGER PRIMARY KEY, back_through TEXT);
+CREATE TABLE IF NOT EXISTS lp_discharge (county_id INTEGER, instrument TEXT, recorded TEXT, defendants TEXT,
+    plaintiffs TEXT, PRIMARY KEY (county_id, instrument));
 """
 
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
@@ -202,8 +214,10 @@ def index_rows(client: PressClient, label_re: re.Pattern, start: date, end: date
 def group_instruments(rows: list) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for r in rows:
+        bl = lambda v: None if (v or "").strip().upper() in ("", "N/A", "NA") else v.strip()
         g = out.setdefault(r.instrument, {"instrument": r.instrument, "doc_type": r.doc_type, "recorded": r.recorded_iso,
-                                          "defendants": [], "plaintiffs": [], "town": r.town})
+                                          "defendants": [], "plaintiffs": [], "town": r.town,
+                                          "block": bl(r.block), "lot": bl(r.lot)})
         if r.direct and r.direct not in g["defendants"]:
             g["defendants"].append(r.direct)
         if r.indirect and r.indirect not in g["plaintiffs"]:
@@ -285,6 +299,29 @@ def save(db: DB, rec: dict) -> None:
                     [rec[k] for k in keys])
 
 
+def link_to_deeds(db: DB) -> int:
+    """A pending lis pendens whose lot later shows a sheriff's deed, a lender take-back or a sale in the
+    state's deed records is resolved; it stays on the map's history but isn't an open pre-foreclosure."""
+    n = 0
+    try:
+        rows = db.conn.execute(
+            """SELECT lp.property_id, lp.recorded, d.deed_date, d.kind, d.price FROM lis_pendens lp
+               JOIN sr1a_sales d ON d.pin = lp.pams_pin
+               WHERE lp.status='pending' AND lp.pams_pin IS NOT NULL AND d.deed_date > lp.recorded
+               ORDER BY d.deed_date""").fetchall()
+    except Exception:  # noqa: BLE001 - no deed data yet
+        return 0
+    for r in rows:
+        k = r["kind"] or ""
+        status = "reo" if "Lender took" in k or "lieu" in k else "sheriff_sold" if "Sheriff" in k else \
+            "sold" if "sale" in k.lower() and (r["price"] or 0) > 1000 else None
+        if status:
+            n += db.conn.execute("UPDATE lis_pendens SET status=?, status_date=? WHERE property_id=? AND status='pending'",
+                                 (status, r["deed_date"], r["property_id"])).rowcount
+    db.commit()
+    return n
+
+
 def link_to_sheriff_sales(db: DB) -> int:
     """Mark pre-foreclosures whose property is now on a sheriff's sale list."""
     n = 0
@@ -323,17 +360,96 @@ def apply_discharges(db: DB, rows: list, county_id: int | None = None) -> int:
     return n
 
 
+_GOV = re.compile(r"STATE OF|UNITED STATES|TOWNSHIP|CITY OF|BOROUGH|COUNTY OF|SECRETARY|INTERNAL REVENUE|TENANT|"
+                  r"OCCUPANT|UNKNOWN|JOHN DOE|JANE DOE|SPOUSE|HEIRS|DEVISEES|MIDLAND|CAPITAL ONE|DISCOVER|PORTFOLIO RECOVERY", re.I)
+RESIDENTIAL_CLASSES = {"2", "3A", "3B", "15A", "15B", "15C", "15D", "15E", "15F", "5A", "5B", "6A", "6B"}
+
+
+def priority(g: dict) -> int:
+    """Which documents to read first: an owner that's a company, a lot named in the index, a tax foreclosure."""
+    from .parcels import looks_like_entity
+    defs = [d for d in g.get("defendants") or [] if not _GOV.search(d)]
+    p = 0
+    if any(looks_like_entity(d) for d in defs):
+        p += 4
+    if g.get("block") and g.get("lot"):
+        p += 1
+    if LP_IN_REM.search(g.get("doc_type") or ""):
+        p += 1
+    return p
+
+
+def _store_index(db: DB, cid: int, groups: list[dict], ts: str) -> int:
+    n = 0
+    for g in groups:
+        extra = {k: g[k] for k in ("doc_id", "viewer") if g.get(k)}
+        cur = db.conn.execute(
+            """INSERT OR IGNORE INTO lp_index (county_id, instrument, doc_type, recorded, defendants, plaintiffs, town,
+               block, lot, street, extra, priority, seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (cid, g["instrument"], g.get("doc_type"), g.get("recorded"), json.dumps(g.get("defendants") or []),
+             json.dumps(g.get("plaintiffs") or []), g.get("town"), g.get("block"), g.get("lot"), g.get("street"),
+             json.dumps(extra), priority(g), ts))
+        n += cur.rowcount
+    return n
+
+
+def _index_group(r) -> dict:
+    g = {k: r[k] for k in ("instrument", "doc_type", "recorded", "town", "block", "lot", "street")}
+    g["defendants"], g["plaintiffs"] = json.loads(r["defendants"] or "[]"), json.loads(r["plaintiffs"] or "[]")
+    g.update(json.loads(r["extra"] or "{}"))
+    return g
+
+
+def discharge_index(db: DB, cid: int, discharges: list[dict]) -> int:
+    """Queued lis pendens that a later discharge names (same defendant and plaintiff) aren't worth reading."""
+    from .contacts import same_party
+    key = lambda name: re.sub(r"[^A-Z0-9]", "", (name or "").upper())[:6]
+    queued: dict[str, list] = {}
+    for r in db.conn.execute("SELECT instrument, recorded, defendants, plaintiffs FROM lp_index "
+                             "WHERE county_id=? AND status='queued'", (cid,)):
+        for d in json.loads(r["defendants"] or "[]"):
+            queued.setdefault(key(d), []).append(r)
+    n = 0
+    for g in discharges:
+        for d in g.get("defendants") or []:
+            for r in queued.get(key(d), []):
+                if (r["recorded"] or "") > (g.get("recorded") or "9999"):
+                    continue
+                if any(same_party(a, b) for a in g["defendants"] for b in json.loads(r["defendants"])) and \
+                   (not g.get("plaintiffs") or any(same_party(a, b) for a in g["plaintiffs"] for b in json.loads(r["plaintiffs"]))):
+                    n += db.conn.execute("UPDATE lp_index SET status='discharged', discharged_on=? WHERE county_id=? "
+                                         "AND instrument=? AND status='queued'", (g.get("recorded"), cid, r["instrument"])).rowcount
+    return n
+
+
+def _residential_by_index(cfg, parcels, cname: str, g: dict) -> str | None:
+    """When the index names the lot, check its tax class before reading the document: a house is skipped."""
+    if not (g.get("block") and g.get("lot")) or not hasattr(parcels, "lookup"):
+        return None
+    try:
+        m = parcels.lookup(cname, g.get("town") or "", g.get("street") or "", g["block"], g["lot"], None)
+    except Exception:  # noqa: BLE001
+        return None
+    if m and (m.prop_class or "").upper() in RESIDENTIAL_CLASSES:
+        return f"Tax class {m.prop_class} ({m.class_label}) at Block {m.block} Lot {m.lot}"
+    return None
+
+
 def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=None, today: date | None = None,
                     adapters: list | None = None) -> dict:
-    """Search each connected county clerk for new foreclosure lis pendens and process them."""
+    """For each connected county clerk: index new lis pendens (and, a few months per run, older ones
+    back to `lis_pendens_since`), drop the ones already discharged, then read the most promising
+    unread documents."""
     from . import clerks
     ensure_tables(db)
     today = today or datetime.now(timezone.utc).date()
-    lookback = int(cfg.get("lis_pendens_lookback_days", 270))
+    since = date.fromisoformat(str(cfg.get("lis_pendens_since") or
+                                   (today - timedelta(days=int(cfg.get("lis_pendens_lookback_days", 270)))).isoformat()))
+    back_days = int(cfg.get("lis_pendens_backfill_days_per_run", 180))
     cap = int(cfg.get("max_lis_pendens_per_county", cfg.get("max_lis_pendens_per_run", 40)))
     overlap = 5                                     # clerks index documents a few days after recording
-    stats = {"found": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {}, "capped": False,
-             "by_county": {}}
+    stats = {"found": 0, "indexed": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {},
+             "capped": False, "by_county": {}}
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     if adapters is None:
         want = cfg.get("lis_pendens_counties")
@@ -345,52 +461,85 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
                                                         client_factory=PressClient))
                 except Exception as e:  # noqa: BLE001
                     stats["errors"][PRESS_COUNTY_NAMES.get(cid, str(cid))] = str(e)[:200]
-        for a in clerks.build_adapters(cfg, browser, include_press=False):
-            adapters.append(a)
+        adapters += clerks.build_adapters(cfg, browser, include_press=False)
     for ad in adapters:
         cid, cname = ad.county_id, ad.county
+        cs = {"system": ad.system, "new": 0, "processed": 0, "tracked": 0, "skipped": 0}
+        stats["by_county"][cname] = cs
         row = db.conn.execute("SELECT checked_through FROM lp_scan WHERE county_id=?", (cid,)).fetchone()
         baseline = row is None
-        start = (date.fromisoformat(row[0]) - timedelta(days=overlap)) if row else today - timedelta(days=lookback)
-        cs = {"found": 0, "processed": 0, "tracked": 0, "system": ad.system}
-        stats["by_county"][cname] = cs
+        fwd_start = (date.fromisoformat(row[0]) - timedelta(days=overlap)) if row else max(since, today - timedelta(days=back_days))
+        back = db.conn.execute("SELECT back_through FROM lp_backfill WHERE county_id=?", (cid,)).fetchone()
+        back_to = date.fromisoformat(back[0]) if back else fwd_start
+        windows = [(fwd_start, today)]
+        if back_to > since:
+            windows.append((max(since, back_to - timedelta(days=back_days)), back_to - timedelta(days=1)))
         try:
-            groups = {g["instrument"]: g for g in ad.lp_groups(start, today, LP_FORECLOSURE, LP_PLAIN, LP_IN_REM)}
-            stats["discharged"] += apply_discharges(db, ad.discharge_groups(start, today, LP_DISCHARGE), county_id=cid)
+            for a, b in windows:
+                groups = ad.lp_groups(a, b, LP_FORECLOSURE, LP_PLAIN, LP_IN_REM)
+                stats["found"] += len(groups)
+                cs["new"] += _store_index(db, cid, groups, ts)
+                dis = ad.discharge_groups(a, b, LP_DISCHARGE)
+                for d in dis:
+                    db.conn.execute("INSERT OR IGNORE INTO lp_discharge VALUES (?,?,?,?,?)",
+                                    (cid, d.get("instrument"), d.get("recorded"), json.dumps(d.get("defendants") or []),
+                                     json.dumps(d.get("plaintiffs") or [])))
+                stats["discharged"] += apply_discharges(db, dis, county_id=cid)
+                db.commit()
+            # The index is read backwards in time, so a discharge can be seen before its lis pendens.
+            alld = [{"recorded": r[0], "defendants": json.loads(r[1]), "plaintiffs": json.loads(r[2])} for r in
+                    db.conn.execute("SELECT recorded, defendants, plaintiffs FROM lp_discharge WHERE county_id=?", (cid,))]
+            stats["discharged"] += discharge_index(db, cid, alld)
+            db.conn.execute("INSERT OR REPLACE INTO lp_scan (county_id, checked_through) VALUES (?, ?)", (cid, today.isoformat()))
+            if len(windows) > 1:
+                db.conn.execute("INSERT OR REPLACE INTO lp_backfill (county_id, back_through) VALUES (?, ?)",
+                                (cid, windows[1][0].isoformat()))
+            elif not back:
+                db.conn.execute("INSERT OR REPLACE INTO lp_backfill (county_id, back_through) VALUES (?, ?)",
+                                (cid, fwd_start.isoformat()))
+            db.commit()
         except Exception as e:  # noqa: BLE001
             log.exception("%s: lis pendens search failed", cname)
             stats["errors"][cname] = str(e)[:200]
-            ad.close()
-            continue
-        cs["found"] = len(groups)
-        stats["found"] += len(groups)
+        stats["indexed"] += cs["new"]
         known = {r[0] for r in db.conn.execute("SELECT instrument FROM lis_pendens WHERE county_id=?", (cid,))}
-        todo = [g for g in groups.values() if g["instrument"] not in known]
-        todo.sort(key=lambda g: g["recorded"] or "", reverse=True)        # newest first
-        done_all = True
-        for g in todo:
+        queue = db.conn.execute("SELECT * FROM lp_index WHERE county_id=? AND status='queued' "
+                                "ORDER BY priority DESC, recorded DESC", (cid,)).fetchall()
+        for r in queue:
             if cs["processed"] >= cap:
-                stats["capped"], done_all = True, False
+                stats["capped"] = True
                 break
+            g = _index_group(r)
+            if g["instrument"] in known:
+                db.conn.execute("UPDATE lp_index SET status='read' WHERE county_id=? AND instrument=?", (cid, g["instrument"]))
+                continue
+            why = _residential_by_index(cfg, parcels, cname, g)
+            if why:
+                db.conn.execute("UPDATE lp_index SET status='skipped', status_note=? WHERE county_id=? AND instrument=?",
+                                (why, cid, g["instrument"]))
+                cs["skipped"] += 1
+                continue
             try:
                 rec = process_instrument(cfg, ad, parcels, cid, cname, g, geocoder)
             except Exception as e:  # noqa: BLE001
                 log.exception("%s: lis pendens %s failed", cname, g["instrument"])
                 stats["errors"][f"{cname} {g['instrument']}"] = str(e)[:200]
                 continue
-            rec.update({"first_seen": ts, "baseline": int(baseline)})
+            # Older filings were history before tracking began: on the map, but not new alerts.
+            old = (g.get("recorded") or "") < (today - timedelta(days=30)).isoformat()
+            rec.update({"first_seen": ts, "baseline": int(baseline or old)})
             save(db, rec)
+            db.conn.execute("UPDATE lp_index SET status='read' WHERE county_id=? AND instrument=?", (cid, g["instrument"]))
             stats["processed"] += 1
             cs["processed"] += 1
             if rec["category"] in ("target", "land"):
                 stats["tracked"] += 1
                 cs["tracked"] += 1
-                db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=baseline)
+                db.add_event(rec["property_id"], ts, "lis_pendens", None, rec.get("plaintiff"), baseline=bool(baseline or old))
             db.commit()
-        if done_all:
-            db.conn.execute("INSERT OR REPLACE INTO lp_scan (county_id, checked_through) VALUES (?, ?)",
-                            (cid, today.isoformat()))
-            db.commit()
+        cs["queued"] = db.conn.execute("SELECT COUNT(*) FROM lp_index WHERE county_id=? AND status='queued'", (cid,)).fetchone()[0]
+        cs["indexed_back_to"] = (db.conn.execute("SELECT back_through FROM lp_backfill WHERE county_id=?", (cid,)).fetchone() or [None])[0]
         ad.close()
+    stats["outcomes"] = link_to_deeds(db)
     stats["linked"] = link_to_sheriff_sales(db)
     return stats

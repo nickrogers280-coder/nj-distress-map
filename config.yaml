@@ -19,7 +19,8 @@ min_assessed_value: 0
 #   Sunrise PRESS: 2 Essex, 17 Passaic, 3 Burlington, 8 Monmouth
 #   NewVision API: 1100 Mercer, 20 Salem        Union's own site: 15 Union
 lis_pendens_counties: [2, 17, 3, 8, 1100, 20, 15]
-lis_pendens_lookback_days: 270   # first run looks back this far (spread over a few runs)
+lis_pendens_since: 2020-01-01        # index every lis pendens back to this date (foreclosures take years)
+lis_pendens_backfill_days_per_run: 180  # each run indexes this much further back until it reaches that date
 max_lis_pendens_per_county: 25   # documents read per county per run
 
 # Bank-owned (REO): properties the foreclosing lender bought back at sheriff sale.
