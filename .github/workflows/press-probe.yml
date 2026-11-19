@@ -1,0 +1,19 @@
+name: Clerk viewer probe
+on:
+  workflow_dispatch:
+    inputs:
+      county: {default: "2"}
+      instrument: {default: "2026068277"}
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr poppler-utils > /dev/null
+          pip install -q -r requirements.txt playwright pillow
+          python -m playwright install --with-deps chromium > /dev/null
+      - run: python tools/press_probe.py ${{ inputs.county }} ${{ inputs.instrument }}

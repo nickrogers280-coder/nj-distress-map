@@ -179,7 +179,7 @@ class PressClient:
         if not clicked:
             self._fail("no Get/Display Image button on the record page", instrument)
             return None
-        deadline, tried_direct = time.time() + 60, set()
+        deadline, tried_direct, seen = time.time() + 60, set(), {}
         while time.time() < deadline:
             for fr in [f for pg in self.page.context.pages for f in pg.frames]:
                 if "RetrieveImage" in fr.url and fr.url not in tried_direct:
@@ -194,18 +194,25 @@ class PressClient:
                 try:
                     tile, count = fr.evaluate("""() => {
                         let t = null;
+                        // Tiles show up as <img> sources, or (when the viewer paints a canvas) only as
+                        // requests in the frame's resource log; take either.
                         const scan = (w) => { try { for (const i of w.document.images) if (/atalagettile/.test(i.src)) t = t || i.src;
+                                                    for (const e of w.performance.getEntriesByType('resource'))
+                                                        if (/atalagettile/.test(e.name)) t = t || e.name;
                                                     for (let k = 0; k < w.frames.length; k++) scan(w.frames[k]); } catch (e) {} };
                         scan(window);
                         let n = null; try { n = window.WebThumbnailViewer1.getCount(); } catch (e) {}
                         return [t, n];
                     }""")
-                except Exception:  # noqa: BLE001 - frame navigated away mid-call
+                except Exception as e:  # noqa: BLE001 - frame navigated away mid-call
+                    seen[fr.url.split("?")[0][-30:]] = f"error {e.__class__.__name__}: {str(e)[:80]}"
                     continue
+                seen[fr.url.split("?")[0][-30:]] = f"tile={'yes' if tile else 'no'} count={count}"
                 if tile:
                     self.fail_streak = 0
                     return tile, int(count or 1)
             time.sleep(1.5)
+        log.info("Viewer frames at timeout: %s", seen)
         self._fail("image viewer never loaded", instrument)
         return None
 
