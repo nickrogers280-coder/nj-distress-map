@@ -31,6 +31,30 @@ with sync_playwright() as pw:
     pg.goto(base + "search/SearchTypeDocType", wait_until="networkidle", timeout=60000)
     print("DOCTYPE PAGE", pg.url, re.sub(r"\s+", " ", pg.inner_text("body"))[:800])
     print("FIELDS", pg.eval_on_selector_all("input,select,button", "els => els.filter(e => e.type !== 'hidden').map(e => (e.name||e.id) + ':' + e.type).slice(0, 40)"))
+    boxes = pg.query_selector_all("input[name=DocTypeInfoCheckBox]")
+    picked = []
+    for bx in boxes:
+        lab = pg.evaluate("(e) => (e.closest('tr,li,div,label')||e.parentElement).innerText", bx)
+        if re.search(r"LIS PENDENS", lab or "", re.I):
+            bx.check(force=True); picked.append((bx.get_attribute("value"), lab.strip()[:60]))
+    print("PICKED", picked)
+    for n, v in (("RecordDateFrom", start.strftime("%m/%d/%Y")), ("RecordDateTo", end.strftime("%m/%d/%Y"))):
+        pg.evaluate("([n, v]) => { const e = document.querySelector(`[name=${n}]`); e.value = v; e.dispatchEvent(new Event('change', {bubbles: true})); }", [n, v])
+    log.clear()
+    pg.click("#btnSearch, [name=btnSearch]")
+    pg.wait_for_timeout(10000)
+    print("RESULTS PAGE", pg.url, re.sub(r"\s+", " ", pg.inner_text("body"))[:1500])
+    for l in log:
+        print("  S", l[:1600])
+    rows = pg.query_selector_all("tr.k-master-row, .k-grid-content tr")
+    print("ROWS", len(rows))
+    if rows:
+        log.clear()
+        rows[0].dblclick(); pg.wait_for_timeout(8000)
+        for p2 in ctx.pages:
+            print("PAGE", p2.url[:200])
+        for l in log:
+            print("  D", l[:900])
     html = pg.content()
     lp = re.findall(r'[^<>"]{0,60}LIS PEND[^<>"]{0,60}', html, re.I)[:10]
     print("LP MENTIONS", lp)

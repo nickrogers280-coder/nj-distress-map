@@ -447,7 +447,7 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
                                    (today - timedelta(days=int(cfg.get("lis_pendens_lookback_days", 270)))).isoformat()))
     back_days = int(cfg.get("lis_pendens_backfill_days_per_run", 180))
     cap = int(cfg.get("max_lis_pendens_per_county", cfg.get("max_lis_pendens_per_run", 40)))
-    overlap = 5                                     # clerks index documents a few days after recording
+    overlap = 30                                    # clerks index documents days to weeks after recording (Passaic lags)
     stats = {"found": 0, "indexed": 0, "processed": 0, "tracked": 0, "discharged": 0, "linked": 0, "errors": {},
              "capped": False, "by_county": {}}
     ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
