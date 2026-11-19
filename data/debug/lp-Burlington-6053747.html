@@ -1,0 +1,77 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"><html style="background-color: #ffffff !important"><head id="HEAD1"><title>
+	File Retriever
+</title><meta name="ROBOTS" content="NOINDEX, NOFOLLOW"><meta name="ROBOTS" content="NOARCHIVE"><meta content="Microsoft Visual Studio .NET 7.1" name="GENERATOR"><meta content="Visual Basic .NET 7.1" name="CODE_LANGUAGE"><meta content="JavaScript" name="vs_defaultClientScript"><meta content="http://schemas.microsoft.com/intellisense/ie5" name="vs_targetSchema"><link href="../Includes/Style/BaseStyle.css" type="text/css" rel="stylesheet">
+
+    <script>
+
+        function changeButton(btncssclass) {
+            try {
+                var el = event.srcElement;
+                if (el.tagName.toUpperCase() == "INPUT")
+                    if (el.type.toUpperCase() == "SUBMIT" || el.type.toUpperCase() == "BUTTON" || el.type.toUpperCase() == "RESET") {
+                    //alert(event.srcElement.className);
+                    if (event.srcElement.className.indexOf("Small") > 0) btncssclass += "Small"
+                    event.srcElement.className = btncssclass;
+                }
+            }
+            catch (ex) { }
+        }
+
+    </script>
+    <script type="text/javascript" language="javascript">
+
+        function hideLeftFrameLoadingMsg() {
+            if (parent.InstViewerHeadFrame.document.getElementById) {  // DOM3 = IE5, NS6
+                parent.InstViewerHeadFrame.document.getElementById('loadMsg').style.visibility = 'hidden';
+            }
+            else {
+                if (parent.InstViewerHeadFrame.document.layers) {  // Netscape 4
+                    document.loadMsg.visibility = 'hidden';
+                }
+                else {  // IE 4
+                    parent.InstViewerHeadFrame.document.all.loadMsg.style.visibility = 'hidden';
+                }
+            }
+            // Resetting the mouse pointer to default.
+            parent.InstViewerHeadFrame.document.body.style.cursor = "default";
+            parent.InstViewerBodyFrame.document.body.style.cursor = "default";
+        }
+
+        function showLeftFrameLoadingMsg() {
+            if (document.getElementById) {  // DOM3 = IE5, NS6
+                document.getElementById('loadMsg').style.visibility = '';
+            }
+            else {
+                if (document.layers) {  // Netscape 4
+                    document.loadMsg.visibility = '';
+                }
+                else {  // IE 4
+                    document.all.loadMsg.style.visibility = '';
+                }
+            }
+        }
+
+    </script>
+<link href="../App_Themes/BurlingtonPress/Style.css" type="text/css" rel="stylesheet"></head>
+<body class="TableRoundedCorner" ms_positioning="GridLayout" style="background-color: #ffffff !important; background-image: none;">
+    <div style="padding: 5px">
+        <div style="background-color: #fff">
+            <form name="Form1" method="post" action="./RetrieveImage.aspx?InstNum=0" id="Form1" onmouseover="changeButton('ButtonClassHover');" onmouseout="changeButton('ButtonClass')">
+<div>
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwUJODM0MDI3MDMyD2QWAgIDD2QWAgIBDw8WAh4EVGV4dAUjQ2xpY2sgJ0Rpc3BsYXkgSW1hZ2UnIHRvIFZpZXcgSW1hZ2VkZGSPWgK5YoXjpT3dFGsyUeaO3SFyVT8RiqVk6+qfr64dKg==">
+</div>
+
+<div>
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="35D72701">
+</div>
+                <div style="margin-left: 40px">
+                    <span id="lblMessage" style="display:inline-block;font-family:Verdana;font-size:Small;font-weight:bold;height:14px;width:680px;">Click 'Display Image' to View Image</span>
+                </div>
+            
+<script language="javascript">window.status='OPRS Document Viewer'</script></form>
+        </div>
+    </div>    
+
+
+</body></html>
