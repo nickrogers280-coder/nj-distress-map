@@ -8,20 +8,18 @@ from tracker.press import BROWSER_UA
 base = "https://records.mercercounty.org/publicsearch/"
 s = requests.Session(); s.headers["User-Agent"] = BROWSER_UA
 s.get(base, timeout=60)
-for sc in ["Scripts/app/services.js", "Scripts/app/documentcontroller.js", "Scripts/app/documentweb.js"]:
+for sc in ["Scripts/app/services.js", "Scripts/app/documentcontroller.js"]:
     js = s.get(base + sc, timeout=60).text
-    for m in re.finditer(r"api/(document|pdf)", js):
-        print(sc, "CTX", re.sub(r"\s+", " ", js[max(0, m.start() - 250):m.end() + 300]))
+    for m in re.finditer(r"Encrypt\s*[:=]\s*function|function\s+Encrypt|api/document\"", js):
+        print(sc, "CTX", re.sub(r"\s+", " ", js[max(0, m.start() - 100):m.end() + 900]))
 end = date.today(); start = end - timedelta(days=30)
 rows = s.post(base + "api/search", json={"MaxRows": 0, "RowsPerPage": 0, "StartRow": 0, "DocTypes": "NLP",
               "FromDate": start.strftime("%Y%m%d"), "ToDate": end.strftime("%Y%m%d")}, timeout=90).json()
 d = rows[0]["doc_id"]
-for u in [f"api/document/{d}", f"api/document?id={d}", f"api/document/{d}/images", f"api/pdf/{d}", f"api/pdf?id={d}"]:
-    try:
-        r = s.get(base + u, timeout=60)
-        print("TRY", u, r.status_code, r.headers.get("content-type"), len(r.content), r.text[:400].replace("\n", " ") if "json" in r.headers.get("content-type", "") or "text" in r.headers.get("content-type", "") else "")
-    except Exception as e:
-        print("TRY", u, "ERR", e)
+for body in [{"Convert": True, "ID": " " + str(d)}, {"Convert": True, "ID": " " + str(d), "Page": "1"}, {"ID": str(d)}]:
+    r = s.post(base + "api/document", json=body, timeout=90)
+    ct = r.headers.get("content-type", "")
+    print("POSTDOC", body, r.status_code, ct, len(r.content), r.text[:600].replace("\n", " ") if "json" in ct or "text" in ct else "")
 
 from playwright.sync_api import sync_playwright
 with sync_playwright() as pw:
@@ -30,7 +28,7 @@ with sync_playwright() as pw:
     pg = ctx.new_page(); log = []
     pg.on("response", lambda r: log.append(f"{r.request.method} {r.status} {r.headers.get('content-type','')} {r.url[:200]}"))
     pg.goto("https://clerk.ucnj.org/UCPA/DocIndex?s=date", wait_until="networkidle", timeout=60000)
-    pg.select_option("select[name=dt]", value="17")
+    pg.select_option("select[name=dt]", value="7")
     pg.fill("input[name=from]", start.strftime("%m/%d/%Y")); pg.fill("input[name=to]", end.strftime("%m/%d/%Y")); pg.fill("input[name=rpp]", "50")
     with pg.expect_navigation(timeout=60000):
         pg.click("input[type=submit]")
