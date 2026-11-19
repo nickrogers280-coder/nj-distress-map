@@ -36,8 +36,9 @@ with sync_playwright() as pw:
     for bx in boxes:
         lab = pg.evaluate("(e) => (e.closest('tr,li,div,label')||e.parentElement).innerText", bx)
         if re.search(r"LIS PENDENS", lab or "", re.I):
-            bx.check(force=True); picked.append((bx.get_attribute("value"), lab.strip()[:60]))
+            pg.evaluate("(e) => { if (!e.checked) e.click(); }", bx); picked.append((bx.get_attribute("value"), lab.strip()[:60]))
     print("PICKED", picked)
+    print("DOCTYPES FIELD", pg.evaluate("() => [document.querySelector('[name=DocTypesDisplay]')?.value, document.querySelector('#DocTypes, [name=DocTypes]')?.value]"))
     for n, v in (("RecordDateFrom", start.strftime("%m/%d/%Y")), ("RecordDateTo", end.strftime("%m/%d/%Y"))):
         pg.evaluate("([n, v]) => { const e = document.querySelector(`[name=${n}]`); e.value = v; e.dispatchEvent(new Event('change', {bubbles: true})); }", [n, v])
     log.clear()
