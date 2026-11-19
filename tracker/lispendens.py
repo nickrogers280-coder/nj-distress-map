@@ -515,8 +515,10 @@ def run_lis_pendens(cfg: dict, db: DB, browser, parcels: ParcelClient, geocoder=
                                 "ORDER BY priority DESC, recorded DESC", (cid,)).fetchall() + \
             db.conn.execute("SELECT * FROM lp_index WHERE county_id=? AND status='discharged' AND priority >= 4 "
                             "ORDER BY recorded DESC", (cid,)).fetchall()
+        # Hudson's index already has the lot, so nothing is opened or read: many more fit in a run.
+        county_cap = cap * 6 if getattr(ad, "system", "") == "Acclaim" else cap
         for r in queue:
-            if cs["processed"] >= cap:
+            if cs["processed"] >= county_cap:
                 stats["capped"] = True
                 break
             g = _index_group(r)
