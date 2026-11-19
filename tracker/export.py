@@ -44,7 +44,10 @@ LP_FIELDS = [
 PRESS_HOME = {2: "https://press.essexregister.com/prodpress/clerk/ClerkHome.aspx?op=basic",
               17: "https://records.passaiccountynj.org/press/clerk/ClerkHome.aspx?op=basic",
               3: "https://press.co.burlington.nj.us/press/clerk/ClerkHome.aspx?op=basic",
-              8: "https://oprs.co.monmouth.nj.us/Oprs/clerk/ClerkHome.aspx?op=basic"}
+              8: "https://oprs.co.monmouth.nj.us/Oprs/clerk/ClerkHome.aspx?op=basic",
+              1100: "https://records.mercercounty.org/publicsearch/",
+              20: "https://clerkrecordsng.salemcountynj.gov/publicsearch/",
+              15: "https://clerk.ucnj.org/UCPA/DocIndex"}
 
 
 def pre_foreclosures(db: DB, closed_cutoff: str, enriched: set) -> list[dict]:
